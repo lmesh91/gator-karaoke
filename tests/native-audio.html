@@ -1,0 +1,49 @@
+<!doctype html><meta charset="utf-8"><title>Native audio browser regression</title>
+<audio id="audio"></audio><pre id="result">Testing native song audio…</pre>
+<img hidden src="/wait-until-result" alt="">
+<script src="/direct-audio.js"></script>
+<script>
+(async () => {
+  let context;
+  const report = async (result) => {
+    document.querySelector('#result').textContent = JSON.stringify(result);
+    await fetch('/test-result', {method:'POST',body:JSON.stringify(result)});
+  };
+  const watchdog = setTimeout(() => report({ok:false,error:'Timed out',context:context && context.state}), 12000);
+  try {
+    const audio = document.querySelector('#audio');
+    context = new AudioContext();
+    const analyser = context.createAnalyser();
+    const silent = context.createGain(); silent.gain.value = 0;
+    analyser.connect(silent); silent.connect(context.destination);
+    let handedBack = false;
+    const direct = new DirectAudio(audio, {
+      playback: () => ({at:0.2,playing:false}),
+      connected: () => context.createMediaElementSource(audio).connect(analyser),
+      disconnected: (playback, restore) => { handedBack = restore && playback.at >= .5; },
+      changed: () => {},
+    });
+    await direct.update('abcdefghijk');
+    if (!direct.active) throw new Error(direct.error || 'Native audio did not activate');
+    await context.resume();
+    await audio.play();
+    await new Promise(resolve => setTimeout(resolve, 400));
+    const samples = new Float32Array(analyser.fftSize);
+    analyser.getFloatTimeDomainData(samples);
+    const energy = samples.reduce((sum,v) => sum + v*v,0) / samples.length;
+    if (energy <= .00001) throw new Error('No audio reached Web Audio: ' + energy);
+    direct.pauseVideo();
+    if (direct.getPlayerState() !== 2) throw new Error('Pause failed');
+    direct.seekTo(.5);
+    if (Math.abs(direct.getCurrentTime() - .5) > .1) throw new Error('Seek failed');
+    direct.update(null, true);
+    if (!handedBack) throw new Error('Audio handoff failed');
+    await context.close();
+    clearTimeout(watchdog);
+    await report({ok:true,energy,userAgent:navigator.userAgent});
+  } catch (error) {
+    clearTimeout(watchdog);
+    await report({ok:false,error:error.message,context:context && context.state});
+  }
+})();
+</script>

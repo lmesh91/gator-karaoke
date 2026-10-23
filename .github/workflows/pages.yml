@@ -28,15 +28,22 @@ jobs:
           node --check app.js
           node --check word-timing.js
           node --check media-finder.js
+          node --check visualizer.js
+          node --check direct-audio.js
+          node --check fullscreen-controls.js
           node --test tests/*.test.cjs
+          python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Prepare static site
         run: |
           mkdir _site
-          cp index.html style.css app.js word-timing.js media-finder.js _site/
+          cp index.html style.css app.js word-timing.js media-finder.js visualizer.js direct-audio.js fullscreen-controls.js _site/
+          cp -r vendor _site/
           # Give every deployment fresh asset URLs, including in returning browsers.
-          sed -i "s|href=\"style.css\"|href=\"style.css?v=${GITHUB_SHA}\"|; s|src=\"word-timing.js\"|src=\"word-timing.js?v=${GITHUB_SHA}\"|; s|src=\"media-finder.js\"|src=\"media-finder.js?v=${GITHUB_SHA}\"|; s|src=\"app.js\"|src=\"app.js?v=${GITHUB_SHA}\"|" _site/index.html
+          for asset in style.css app.js word-timing.js media-finder.js visualizer.js direct-audio.js fullscreen-controls.js; do
+            sed -i "s|\"${asset}\"|\"${asset}?v=${GITHUB_SHA}\"|g" _site/index.html
+          done
       - name: Upload site
         uses: actions/upload-pages-artifact@v4
         with:

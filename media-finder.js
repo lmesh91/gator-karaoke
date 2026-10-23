@@ -7,7 +7,10 @@
 
 const MediaFinder = (() => {
   const INSTANCE_LIST = 'https://api.invidious.io/instances.json?sort_by=health';
-  const FALLBACK_INSTANCES = ['invidious.f5.si'];
+  // Public clearnet instances from docs.invidious.io/instances. Directory
+  // api/cors flags are hints; actual browser requests decide availability.
+  const FALLBACK_INSTANCES = ['invidious.f5.si', 'inv.nadeko.net', 'invidious.nerdvpn.de',
+    'yt.chocolatemoo53.com', 'invidious.tiekoetter.com'];
   const WIKIDATA = 'https://www.wikidata.org/w/api.php?format=json&origin=*';
   const VIDEO_ID = /^[\w-]{11}$/;
 
@@ -23,6 +26,11 @@ const MediaFinder = (() => {
       .replace(/\s*[([][^)\]]*[)\]]/g, '')
       .replace(/\s[-–—]\s.*$/, '')
       .trim() || String(title || '');
+  }
+
+  function youtubeSearchURL(track, instrumental = false) {
+    const q = [track.artistName, baseTitle(track.trackName), instrumental ? 'instrumental' : ''].filter(Boolean).join(' ');
+    return `https://www.youtube.com/results?${new URLSearchParams({ search_query: q })}`;
   }
 
   function artistParts(artist) {
@@ -134,29 +142,81 @@ const MediaFinder = (() => {
   }
 
   let instancesPromise = null;
+  let instancesExpire = 0;
   let preferred = null;
+  const failedUntil = new Map();
+  const publicHost = (host) => typeof host === 'string' && /^(?:[a-z0-9-]+\.)+[a-z]{2,}$/i.test(host)
+    && !/\.(onion|i2p|ygg)$/i.test(host);
   function instances() {
-    instancesPromise = instancesPromise || getJSON(INSTANCE_LIST, null, 6000)
-      .then((list) => list.filter(([, i]) => i && i.type === 'https' && i.api && i.cors).map(([host]) => host))
-      .catch(() => [])
-      .then((hosts) => [...new Set([...hosts, ...FALLBACK_INSTANCES])].slice(0, 6));
+    if (!instancesPromise || Date.now() >= instancesExpire) {
+      instancesExpire = Date.now() + 10 * 60 * 1000;
+      instancesPromise = getJSON(INSTANCE_LIST, null, 4000)
+        .then((list) => {
+          if (!Array.isArray(list)) throw new Error('Unexpected instance directory');
+          return list.filter((entry) => Array.isArray(entry) && publicHost(entry[0])
+            && entry[1] && entry[1].type === 'https' && !entry[0].startsWith('inv-ygg.'))
+            .sort((a, b) => Number(!!(b[1].api && b[1].cors)) - Number(!!(a[1].api && a[1].cors)))
+            .map(([host]) => host);
+        })
+        .catch(() => { instancesExpire = Date.now() + 60000; return []; })
+        .then((hosts) => [...new Set([...hosts, ...FALLBACK_INSTANCES])]);
+    }
     return instancesPromise;
   }
 
+  let helperPromise = null, helperExpires = 0, helperAudio = false;
+  const helperURL = (path) => new URL(`api/media/${path}`, location.href).href;
+  async function localHelper() {
+    if (typeof location === 'undefined' || !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) return false;
+    if (!helperPromise || Date.now() >= helperExpires) {
+      helperExpires = Date.now() + 60000;
+      helperPromise = getJSON(helperURL('status'), null, 1500)
+        .then((data) => {
+          const available = data.provider === 'yt-dlp' && data.available === true;
+          helperAudio = available && data.directAudio === true;
+          return available;
+        }).catch(() => { helperAudio = false; return false; });
+    }
+    return helperPromise;
+  }
+
+  async function localAudio() { await localHelper(); return helperAudio; }
+
   async function youtubeSearch(q, { signal } = {}) {
+    if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    if (await localHelper()) {
+      try {
+        const data = await getJSON(`${helperURL('search')}?${new URLSearchParams({ q })}`, signal, 35000);
+        if (!data || !Array.isArray(data.videos)) throw new Error('Unexpected direct search response');
+        return data.videos.filter((v) => v && VIDEO_ID.test(v.id || ''))
+          .map((v) => ({ id: v.id, title: String(v.title || ''), author: String(v.author || ''), length: Number(v.length) || 0 }));
+      } catch (e) {
+        if (signal && signal.aborted) throw e;
+        // A temporary YouTube error can still use the public mirror fallback.
+      }
+    }
+    return invidiousSearch(q, { signal });
+  }
+
+  async function invidiousSearch(q, { signal } = {}) {
     const hosts = await instances();
     const order = preferred ? [preferred, ...hosts.filter((h) => h !== preferred)] : hosts;
     let lastError = null;
     for (const host of order) {
+      if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      if ((failedUntil.get(host) || 0) > Date.now()) continue;
       try {
-        const list = await getJSON(`https://${host}/api/v1/search?${new URLSearchParams({ q, type: 'video' })}`, signal);
+        const list = await getJSON(`https://${host}/api/v1/search?${new URLSearchParams({ q, type: 'video' })}`, signal, 4000);
         if (!Array.isArray(list)) throw new Error('Unexpected search response');
+        failedUntil.delete(host);
         preferred = host;
         return list
           .filter((v) => v && (v.type === 'video' || !v.type) && VIDEO_ID.test(v.videoId || '') && !v.liveNow && !v.isUpcoming)
           .map((v) => ({ id: v.videoId, title: v.title || '', author: v.author || '', length: Number(v.lengthSeconds) || 0 }));
       } catch (e) {
         if (signal && signal.aborted) throw e;
+        failedUntil.set(host, Date.now() + 60000);
+        if (preferred === host) preferred = null;
         lastError = e;
       }
     }
@@ -218,7 +278,7 @@ const MediaFinder = (() => {
     };
   }
 
-  return { find, rankVideos, rankInstrumentals, artistMatches, baseTitle, youtubeSearch, wikidataVideos };
+  return { find, rankVideos, rankInstrumentals, artistMatches, baseTitle, youtubeSearch, wikidataVideos, localHelper, localAudio, youtubeSearchURL };
 })();
 
 if (typeof module !== 'undefined') module.exports = MediaFinder;

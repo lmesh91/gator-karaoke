@@ -57,7 +57,24 @@
 
       <section class="card" id="mediaCard">
         <h2><span class="step">2</span> Video &amp; backing track</h2>
+        <p class="hint" id="helperStatus" aria-live="polite" hidden></p>
         <div id="mediaStatus" class="status" aria-live="polite">Pick a song and its video is found automatically.</div>
+        <div class="media-fallback" id="mediaFallback" hidden>
+          <p class="hint">Find a version on YouTube, then paste its link here. Your selected lyrics stay on stage.</p>
+          <div class="row small">
+            <a class="btn" id="youtubeSearch" target="_blank" rel="noopener noreferrer">Find song on YouTube ↗</a>
+            <a class="btn ghost" id="youtubeInstrumentalSearch" target="_blank" rel="noopener noreferrer">Instrumental ↗</a>
+          </div>
+          <form id="manualVideoForm">
+            <div class="row">
+              <input id="manualVideoUrl" type="text" inputmode="url" placeholder="Paste the YouTube link here" aria-label="YouTube video link" autocomplete="off" required>
+              <button class="btn orange" type="submit">Load</button>
+            </div>
+            <label class="check"><input type="checkbox" id="manualInstrumental"> Use as instrumental backing track</label>
+          </form>
+          <p class="hint" id="manualVideoHint"></p>
+          <p class="status" id="manualVideoStatus" aria-live="polite"></p>
+        </div>
         <ul id="videoList" class="media-list" aria-label="Videos"></ul>
 
         <div class="inst-row">
@@ -71,12 +88,24 @@
         <ul id="instList" class="media-list" aria-label="Instrumentals" hidden></ul>
 
         <div class="row small">
-          <span class="muted">Video:</span>
+          <span class="muted">Background:</span>
           <div class="seg" id="ytMode">
             <button type="button" data-mode="bg" aria-pressed="true">Behind lyrics</button>
-            <button type="button" data-mode="mini" aria-pressed="false">Corner</button>
+            <button type="button" data-mode="viz" aria-pressed="false">Visualizer</button>
             <button type="button" data-mode="off" aria-pressed="false">Hidden</button>
           </div>
+        </div>
+
+        <div id="vizControls" class="viz-controls" hidden>
+          <label for="vizPreset">MilkDrop preset</label>
+          <select id="vizPreset" disabled><option>Loading presets…</option></select>
+          <div class="row small">
+            <button type="button" class="btn ghost" id="vizShuffle" disabled>Shuffle</button>
+            <label class="check"><input type="checkbox" id="vizAuto" checked> Change every 30s</label>
+          </div>
+          <button type="button" class="btn wide" id="vizAudio" aria-describedby="vizCaptureHint">Connect tab audio…</button>
+          <p class="hint" id="vizCaptureHint">Your browser opens a sharing picker. Choose this tab and enable tab audio. Only sound is used, locally; the picture is ignored.</p>
+          <p class="hint" id="vizStatus" aria-live="polite">Animated MilkDrop backgrounds. Audio files react automatically.</p>
         </div>
 
         <details class="own" id="ownAudio">
@@ -124,6 +153,7 @@
     </aside>
 
     <section class="stage" id="stage">
+      <canvas class="viz-canvas" id="vizCanvas" aria-hidden="true" hidden></canvas>
       <div class="yt-wrap bg" id="ytWrap" hidden><div id="ytPlayer"></div></div>
       <div class="yt-inst" aria-hidden="true"><div id="ytInstPlayer"></div></div>
 
@@ -149,6 +179,7 @@
         <div class="plain" id="plain" hidden></div>
       </div>
 
+      <div class="stage-controls" id="stageControls">
       <div class="transport">
         <button class="play" id="playBtn" type="button" aria-label="Play">
           <svg viewBox="0 0 24 24" class="i-play"><path d="M7 4.5v15l13-7.5z"/></svg>
@@ -173,12 +204,16 @@
         <span><kbd>T</kbd> tap sync</span>
         <span><kbd>F</kbd> full screen</span>
       </div>
+      </div>
     </section>
   </main>
 
   <audio id="audio" preload="auto"></audio>
   <script src="word-timing.js"></script>
   <script src="media-finder.js"></script>
+  <script src="visualizer.js"></script>
+  <script src="direct-audio.js"></script>
+  <script src="fullscreen-controls.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

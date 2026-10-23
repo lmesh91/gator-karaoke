@@ -68,3 +68,13 @@ test('artist and title matching tolerate "The", features and edition suffixes', 
   assert.equal(artistMatches('Exam', 'The Examples'), false);
   assert.equal(baseTitle('Example Song (feat. Guest) - 2011 Remaster'), 'Example Song');
 });
+
+test('manual YouTube search links contain the selected artist and song, with an instrumental option', () => {
+  const {youtubeSearchURL} = require('../media-finder.js');
+  const song = {artistName: 'Earth, Wind & Fire', trackName: 'September (Remastered)'};
+  const video = new URL(youtubeSearchURL(song));
+  assert.equal(video.origin, 'https://www.youtube.com');
+  assert.equal(video.pathname, '/results');
+  assert.equal(video.searchParams.get('search_query'), 'Earth, Wind & Fire September');
+  assert.equal(new URL(youtubeSearchURL(song, true)).searchParams.get('search_query'), 'Earth, Wind & Fire September instrumental');
+});

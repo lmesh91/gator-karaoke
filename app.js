@@ -117,12 +117,39 @@ function parseLRC(src) {
    for audio playing on another device.
    ====================================================================== */
 const audio = $('#audio');
-let yt = null, ytReadyPromise = null, ytVideoId = null;
+let yt = null, ytReadyPromise = null, ytPlayerReady = null, ytVideoId = null, ytBlockedId = null;
 let ytMode = store.get('gkc.ytMode', 'bg');
+if (ytMode === 'mini') ytMode = 'viz';
+if (!['bg', 'viz', 'off'].includes(ytMode)) ytMode = 'bg';
 // Instrumental mode: a second, hidden player supplies the audio and the clock,
 // while the music video (if any) plays muted and follows it.
 let ytInst = null, ytInstReady = null, instVideoId = null, instOn = false;
-const audioPlayer = () => (instOn && ytInst ? ytInst : yt);
+const embeddedAudioPlayer = () => (instOn && ytInst ? ytInst : yt);
+const directAudio = new DirectAudio(audio, {
+  playback: () => {
+    const p = embeddedAudioPlayer();
+    const id = p && p.getVideoData && p.getVideoData().video_id;
+    const sameSong = !id || id === directAudio.requested;
+    return { at: sameSong ? media.time() : 0, playing: sameSong && media.playing() };
+  },
+  connected: () => {
+    [yt, ytInst].forEach((p) => p && p.mute && p.mute());
+    if (ytInst && ytInst.pauseVideo) ytInst.pauseVideo();
+    renderSource();
+  },
+  disconnected: (playback, restore) => {
+    if (restore && media.kind === 'yt') {
+      const p = embeddedAudioPlayer();
+      if (p && p.seekTo) p.seekTo(playback.at, true);
+      if (p && p.unMute) p.unMute();
+      if (p && playback.playing && p.playVideo) p.playVideo();
+      else if (p && p.pauseVideo) p.pauseVideo();
+    }
+    renderSource();
+  },
+  changed: () => stageVisualizer.sourceChanged(),
+});
+const audioPlayer = () => directAudio.active ? directAudio : embeddedAudioPlayer();
 const ytClock = new Map();
 
 // getCurrentTime() advances in coarse steps; interpolate between them while playing.
@@ -161,14 +188,14 @@ const media = {
     if (this.kind === 'yt') {
       const p = audioPlayer();
       if (p && p.playVideo) p.playVideo();
-      if (instOn && p !== yt && yt && ytVideoId && yt.playVideo) { yt.mute(); yt.playVideo(); }
+      if ((instOn || directAudio.active) && p !== yt && yt && ytVideoId && yt.playVideo) { yt.mute(); yt.playVideo(); }
       return;
     }
     if (this.clock.startedAt == null) this.clock.startedAt = performance.now();
   },
   pause() {
     if (this.kind === 'file') { audio.pause(); return; }
-    if (this.kind === 'yt') { [yt, ytInst].forEach((p) => p && p.pauseVideo && p.pauseVideo()); return; }
+    if (this.kind === 'yt') { [yt, ytInst, directAudio].forEach((p) => p && p.pauseVideo && p.pauseVideo()); return; }
     if (this.clock.startedAt != null) { this.clock.base = this.time(); this.clock.startedAt = null; }
   },
   toggle() { this.playing() ? this.pause() : this.play(); },
@@ -178,7 +205,7 @@ const media = {
     if (this.kind === 'yt') {
       const p = audioPlayer();
       if (p && p.seekTo) p.seekTo(t, true);
-      if (instOn && p !== yt && yt && ytVideoId && yt.seekTo) yt.seekTo(t, true);
+      if ((instOn || directAudio.active) && p !== yt && yt && ytVideoId && yt.seekTo) yt.seekTo(t, true);
       ytClock.clear();
       return;
     }
@@ -187,37 +214,47 @@ const media = {
   },
   use(kind, name) {
     if (this.kind !== kind) this.pause();
+    if (kind !== 'yt') directAudio.release();
     this.kind = kind;
     this.name = name;
     $('#ytWrap').hidden = kind !== 'yt';
     renderSource();
     loadOffset();
     checkDuration();
+    stageVisualizer.sourceChanged();
   },
   // True when the person brought their own audio (a file, a pasted link, or
   // another device); automatic video choices then must not replace it.
   own: false,
 };
 
+const stageVisualizer = new StageVisualizer({
+  stage: $('#stage'), canvas: $('#vizCanvas'), audio,
+  sourceKind: () => directAudio.active ? 'direct' : media.kind, playing: () => media.playing(), store, directAudio,
+});
+
 function renderSource() {
   let label = media.name;
   if (media.kind === 'yt' && instOn && mediaState.inst) {
     label = `Instrumental · ${mediaState.inst.title}${ytVideoId ? ' (video muted)' : ''}`;
   }
+  if (directAudio.active) label += ' · direct audio';
   $('#sourceName').textContent = label;
 }
 
 // Keep a muted music video in step with the instrumental that is playing.
 let lastFollow = 0;
 function followVideo(now) {
-  if (media.kind !== 'yt' || !instOn || !ytInst || !yt || !ytVideoId || !yt.getPlayerState || now - lastFollow < 500) return;
+  if (media.kind !== 'yt' || (!instOn && !directAudio.active) || !yt || !ytVideoId || ytBlockedId === ytVideoId || !yt.getPlayerState || now - lastFollow < 500) return;
   lastFollow = now;
-  const playing = ytInst.getPlayerState() === 1;
+  const p = audioPlayer();
+  if (!p) return;
+  const playing = p.getPlayerState() === 1;
   const vs = yt.getPlayerState();
   if (!yt.isMuted()) yt.mute();
   if (playing && vs !== 1 && vs !== 3 && vs !== 0) yt.playVideo();
   else if (!playing && vs === 1) yt.pauseVideo();
-  const t = playerTime(ytInst);
+  const t = playerTime(p);
   const end = yt.getDuration ? yt.getDuration() : 0;
   if (playing && end && t < end - 1 && Math.abs((yt.getCurrentTime() || 0) - t) > 0.8) yt.seekTo(t, true);
 }
@@ -226,6 +263,7 @@ function followVideo(now) {
 let objectUrl = null;
 async function loadFile(file) {
   if (!file) return;
+  directAudio.release();
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   objectUrl = URL.createObjectURL(file);
   audio.src = objectUrl;
@@ -304,17 +342,21 @@ let ytMetadataTimer = null, ytMetadataAttempts = 0;
 let ytLookup = null;
 // searchLyrics: true for a link the person pasted, whose title finds the lyrics.
 async function loadYouTube(id, { searchLyrics = true } = {}) {
+  if (id !== ytVideoId) directAudio.release();
   clearTimeout(ytMetadataTimer);
   ytMetadataAttempts = 0;
   ytVideoId = id;
+  ytBlockedId = null;
   ytSearched = searchLyrics ? null : id;
   ytLookup = null;
   if (searchLyrics) { stopInstrumental(); selectTab('yt'); }
   media.use('yt', 'YouTube');
   applyYtMode();
   const YT = await loadYTApi();
-  if (!yt) {
-    await new Promise((resolve) => {
+  if (ytVideoId !== id || media.kind !== 'yt') return;
+  const create = !yt;
+  if (create) {
+    ytPlayerReady = new Promise((resolve) => {
       yt = new YT.Player('ytPlayer', {
         videoId: id,
         playerVars: { playsinline: 1, rel: 0, modestbranding: 1, iv_load_policy: 3 },
@@ -322,6 +364,11 @@ async function loadYouTube(id, { searchLyrics = true } = {}) {
           onReady: resolve,
           onStateChange: onYtState,
           onError: (e) => {
+            ytBlockedId = ytVideoId;
+            if (directAudio.available && ytMode === 'viz') {
+              setWarn('The music video is unavailable. Direct song audio can still play with the visualizer.');
+              return;
+            }
             const blocked = e.data === 101 || e.data === 150;
             // An automatically chosen video falls through to the next candidate.
             if (!media.own && mediaState.video && mediaState.video.id === ytVideoId) { nextVideo(ytVideoId); return; }
@@ -330,10 +377,11 @@ async function loadYouTube(id, { searchLyrics = true } = {}) {
         },
       });
     });
-  } else {
-    yt.cueVideoById(id);
   }
-  if (instOn) yt.mute(); else yt.unMute();
+  await ytPlayerReady;
+  if (ytVideoId !== id || media.kind !== 'yt') return;
+  if (!create) yt.cueVideoById(id);
+  if (instOn || directAudio.active) yt.mute(); else yt.unMute();
   onYtState();
 }
 
@@ -345,7 +393,7 @@ function ensureInstPlayer() {
       events: {
         onReady: () => { ytInst = p; resolve(p); },
         onStateChange: () => checkDuration(),
-        onError: () => { if (instVideoId) nextInstrumental(instVideoId); },
+        onError: () => { if (instVideoId && !(directAudio.available && ytMode === 'viz')) nextInstrumental(instVideoId); },
       },
     });
   }));
@@ -407,8 +455,9 @@ function refineYouTubeTiming(lookup) {
 
 function applyYtMode() {
   const wrap = $('#ytWrap');
-  wrap.className = `yt-wrap ${ytMode}`;
+  wrap.className = `yt-wrap ${ytMode === 'viz' ? 'off' : ytMode}`;
   $$('#ytMode button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === ytMode)));
+  stageVisualizer.setEnabled(ytMode === 'viz');
 }
 
 function cleanTitle(t) {
@@ -748,6 +797,8 @@ function centerOn(idx) {
 }
 
 function frame() {
+  directAudio.update(ytMode === 'viz' && media.kind === 'yt' && directAudio.available
+    ? (instOn ? instVideoId : ytVideoId) : null, ytMode !== 'viz' && media.kind === 'yt');
   const mt = media.time();
   const t = mt + state.offset;
   const lines = state.lines;
@@ -865,6 +916,16 @@ function checkDuration() {
    Video & backing track — found automatically for the chosen lyrics
    ====================================================================== */
 const mediaState = { track: null, videos: [], instrumentals: [], video: null, inst: null, ctl: null, failed: new Set(), searching: false, error: '', showAll: false, showAllInst: false };
+MediaFinder.localHelper().then((connected) => {
+  const label = $('#helperStatus');
+  label.hidden = false;
+  label.textContent = connected ? 'Direct YouTube search connected · no API key needed.'
+    : 'If automatic search is unavailable, find a video on YouTube and paste its link below.';
+});
+MediaFinder.localAudio().then((available) => {
+  directAudio.available = available;
+  stageVisualizer.sourceChanged();
+});
 // On by default: this is a karaoke night, so sing over the backing track unless someone turns it off.
 let instPref = store.get('gkc.backing', true);
 
@@ -874,12 +935,27 @@ function setMediaStatus(msg, err = false) {
   status.textContent = msg;
 }
 
+function renderMediaFallback(track, show) {
+  const panel = $('#mediaFallback');
+  panel.hidden = !show && !panel.dataset.engaged;
+  $('#youtubeSearch').href = MediaFinder.youtubeSearchURL(track);
+  $('#youtubeInstrumentalSearch').href = MediaFinder.youtubeSearchURL(track, true);
+  $('#manualVideoHint').textContent = track.duration
+    ? `Choose a version close to ${fmt(track.duration)} for the best lyric sync.` : '';
+}
+
 // place: cue the best video automatically (false when the person's own audio should stay).
 async function findMediaFor(track, { place = true, prefer = null } = {}) {
   if (mediaState.ctl) mediaState.ctl.abort();
   const ctl = new AbortController();
   stopInstrumental();
   Object.assign(mediaState, { track, videos: [], instrumentals: [], video: null, inst: null, ctl, failed: new Set(), searching: true, showAll: false, showAllInst: false });
+  delete $('#mediaFallback').dataset.engaged;
+  $('#manualVideoUrl').value = '';
+  $('#manualVideoStatus').textContent = '';
+  $('#manualInstrumental').checked = false;
+  // Give hosted users a usable path while public mirrors are still responding.
+  renderMediaFallback(track, true);
   setMediaStatus('Finding the video and backing track…');
   renderMedia();
   let found;
@@ -899,8 +975,9 @@ async function findMediaFor(track, { place = true, prefer = null } = {}) {
   mediaState.inst = (prefer && prefer.inst && found.instrumentals.find((v) => v.id === prefer.inst)) || found.instrumentals[0] || null;
 
   const searchDown = found.errors && found.errors.search;
+  renderMediaFallback(track, !!searchDown || !found.videos.length || !found.instrumentals.length);
   if (!found.videos.length) {
-    setMediaStatus(searchDown ? 'YouTube search isn’t responding right now. Use your own audio below.' : 'No matching video found. Use your own audio below.', !!searchDown);
+    setMediaStatus(searchDown ? 'Automatic video search is unavailable. Paste a YouTube link or use an audio file below.' : 'No matching video found. Use your own audio below.', !!searchDown);
   } else if (place) {
     const pick = (prefer && prefer.yt && found.videos.find((v) => v.id === prefer.yt)) || found.videos[0];
     chooseVideo(pick);
@@ -928,12 +1005,14 @@ function nextVideo(failedId) {
     chooseVideo(next);
   } else {
     setMediaStatus('None of the videos found can be played here. Use your own audio below.', true);
+    if (mediaState.track) renderMediaFallback(mediaState.track, true);
     renderMedia();
   }
 }
 
 function stopInstrumental() {
   if (!instOn) return;
+  directAudio.release();
   instOn = false;
   if (ytInst && ytInst.pauseVideo) ytInst.pauseVideo();
   if (yt && yt.unMute) yt.unMute();
@@ -949,6 +1028,7 @@ async function setInstrumental(on) {
   const wasPlaying = media.playing();
   const at = media.time();
   media.pause();
+  directAudio.release();
   instOn = true;
   renderMedia();
   const p = await ensureInstPlayer();
@@ -1129,6 +1209,59 @@ $('#ytForm').addEventListener('submit', (e) => {
   loadYouTube(id);
   renderMedia();
 });
+$('#mediaFallback').addEventListener('focusin', () => { $('#mediaFallback').dataset.engaged = 'true'; });
+$('#youtubeSearch').addEventListener('click', () => {
+  $('#mediaFallback').dataset.engaged = 'true';
+  $('#manualInstrumental').checked = false;
+});
+$('#youtubeInstrumentalSearch').addEventListener('click', () => {
+  $('#mediaFallback').dataset.engaged = 'true';
+  $('#manualInstrumental').checked = true;
+});
+$('#manualVideoForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const status = $('#manualVideoStatus');
+  const id = ytId($('#manualVideoUrl').value);
+  if (!id) {
+    status.className = 'status err';
+    status.textContent = 'Paste a valid YouTube video link.';
+    return;
+  }
+  const track = mediaState.track;
+  if (!track) return;
+  if (mediaState.ctl) mediaState.ctl.abort();
+  mediaState.ctl = null;
+  mediaState.searching = false;
+  const instrumental = $('#manualInstrumental').checked;
+  const pick = { id, title: `${track.artistName} – ${track.trackName}`, author: 'Pasted YouTube link', length: 0,
+    kind: instrumental ? 'Instrumental' : 'Video', diff: null };
+  status.className = 'status';
+  status.textContent = 'Loading your YouTube link…';
+  try {
+    if (instrumental) {
+      if (!mediaState.instrumentals.some((v) => v.id === id)) mediaState.instrumentals.push(pick);
+      mediaState.inst = pick;
+      instPref = true;
+      store.set('gkc.backing', true);
+      await setInstrumental(true);
+    } else {
+      stopInstrumental();
+      if (!mediaState.videos.some((v) => v.id === id)) mediaState.videos.unshift(pick);
+      mediaState.video = pick;
+      media.own = true;
+      await loadYouTube(id, { searchLyrics: false });
+    }
+    if (mediaState.track !== track) return;
+    media.own = true;
+    status.textContent = 'Link loaded. Press play when you’re ready.';
+    setMediaStatus('Using your YouTube link with the selected lyrics.');
+  } catch (error) {
+    console.error('Could not load the pasted YouTube link', error);
+    status.className = 'status err';
+    status.textContent = 'YouTube could not load that link. Try another video or an audio file.';
+  }
+  renderMedia();
+});
 $('#instToggle').addEventListener('change', (e) => {
   instPref = e.target.checked;
   store.set('gkc.backing', instPref);
@@ -1177,11 +1310,12 @@ $('#offPlus').addEventListener('click', () => setOffset(state.offset + 0.1));
 $('#tapBtn').addEventListener('click', tapSync);
 const toggleFs = () => (document.fullscreenElement ? document.exitFullscreen() : $('#stage').requestFullscreen().catch(() => {}));
 $('#fsBtn').addEventListener('click', toggleFs);
+new FullscreenControls($('#stage'), $('#stageControls'));
 document.addEventListener('fullscreenchange', () => setTimeout(() => { state.focus = -2; }, 60));
 window.addEventListener('resize', () => { state.focus = -2; });
 
 document.addEventListener('keydown', (e) => {
-  if (e.target.closest('input[type=text], input[type=search]') || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.target.closest('input, select, textarea, button') || e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key;
   if (k === ' ') { e.preventDefault(); media.toggle(); }
   else if (k === 'ArrowLeft') { e.preventDefault(); media.seek(media.time() - 5); }
