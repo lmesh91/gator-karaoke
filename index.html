@@ -44,53 +44,71 @@
   <main class="layout">
     <aside class="side">
       <section class="card">
-        <h2><span class="step">1</span> Bring the audio</h2>
-        <div class="tabs" role="tablist">
-          <button role="tab" class="tab" data-tab="file" aria-selected="true">Audio file</button>
-          <button role="tab" class="tab" data-tab="yt" aria-selected="false">YouTube</button>
-          <button role="tab" class="tab" data-tab="clock" aria-selected="false">Other device</button>
-        </div>
-
-        <div class="tabpanel" data-panel="file">
-          <label class="drop" id="drop">
-            <input type="file" id="fileInput" accept="audio/*,video/mp4,.mp3,.m4a,.flac,.ogg,.wav,.opus,.aac">
-            <strong>Drop a song here</strong>
-            <span>or click to pick an MP3 / M4A / FLAC / WAV.<br>Lyrics are matched automatically from its tags or file name.</span>
-          </label>
-        </div>
-
-        <div class="tabpanel" data-panel="yt" hidden>
-          <form id="ytForm" class="row">
-            <input id="ytUrl" type="text" placeholder="Paste a YouTube link" autocomplete="off">
-            <button class="btn" type="submit">Load</button>
-          </form>
-          <p class="hint">The video's title is used to find lyrics. Some videos block embedding, so try the official audio upload if one won't play.</p>
-          <div class="row small">
-            <span class="muted">Video:</span>
-            <div class="seg" id="ytMode">
-              <button type="button" data-mode="bg" aria-pressed="true">Behind lyrics</button>
-              <button type="button" data-mode="mini" aria-pressed="false">Corner</button>
-              <button type="button" data-mode="off" aria-pressed="false">Hidden</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="tabpanel" data-panel="clock" hidden>
-          <p class="hint">Playing from Spotify, a speaker, or a phone? Pick a song below, then press <kbd>Space</kbd> as you hit play on the other device. Press <kbd>T</kbd> the instant the <em>next</em> line starts to lock the sync.</p>
-          <button class="btn wide" id="useClock" type="button">Use the stage clock</button>
-        </div>
-        <p class="source-line">Source: <span id="sourceName">Stage clock</span></p>
-      </section>
-
-      <section class="card">
-        <h2><span class="step">2</span> Find the lyrics</h2>
+        <h2><span class="step">1</span> Find the song</h2>
         <form id="searchForm" class="row">
           <input id="q" type="search" placeholder="Song, artist, or both" autocomplete="off">
           <button class="btn" type="submit">Search</button>
         </form>
         <label class="check"><input type="checkbox" id="syncedOnly" checked> Synced lyrics only</label>
         <div id="searchStatus" class="status" aria-live="polite"></div>
-        <ul id="results" class="results"></ul>
+        <div class="timing-source" id="timingStatus" aria-live="polite" hidden></div>
+        <div id="results" class="results"></div>
+      </section>
+
+      <section class="card" id="mediaCard">
+        <h2><span class="step">2</span> Video &amp; backing track</h2>
+        <div id="mediaStatus" class="status" aria-live="polite">Pick a song and its video is found automatically.</div>
+        <ul id="videoList" class="media-list" aria-label="Videos"></ul>
+
+        <div class="inst-row">
+          <label class="switch">
+            <input type="checkbox" id="instToggle" disabled>
+            <span class="switch-track" aria-hidden="true"></span>
+            <span class="switch-label">Instrumental <span class="muted">(no lead vocals)</span></span>
+          </label>
+          <span class="inst-count muted" id="instCount"></span>
+        </div>
+        <ul id="instList" class="media-list" aria-label="Instrumentals" hidden></ul>
+
+        <div class="row small">
+          <span class="muted">Video:</span>
+          <div class="seg" id="ytMode">
+            <button type="button" data-mode="bg" aria-pressed="true">Behind lyrics</button>
+            <button type="button" data-mode="mini" aria-pressed="false">Corner</button>
+            <button type="button" data-mode="off" aria-pressed="false">Hidden</button>
+          </div>
+        </div>
+
+        <details class="own" id="ownAudio">
+          <summary>Use your own audio instead</summary>
+          <div class="tabs" role="tablist">
+            <button role="tab" class="tab" data-tab="file" aria-selected="true">Audio file</button>
+            <button role="tab" class="tab" data-tab="yt" aria-selected="false">YouTube link</button>
+            <button role="tab" class="tab" data-tab="clock" aria-selected="false">Other device</button>
+          </div>
+
+          <div class="tabpanel" data-panel="file">
+            <label class="drop" id="drop">
+              <input type="file" id="fileInput" accept="audio/*,video/mp4,.mp3,.m4a,.flac,.ogg,.wav,.opus,.aac">
+              <strong>Drop a song here</strong>
+              <span>or click to pick an MP3 / M4A / FLAC / WAV.<br>Lyrics are matched automatically from its tags or file name.</span>
+            </label>
+          </div>
+
+          <div class="tabpanel" data-panel="yt" hidden>
+            <form id="ytForm" class="row">
+              <input id="ytUrl" type="text" placeholder="Paste a YouTube link" autocomplete="off">
+              <button class="btn" type="submit">Load</button>
+            </form>
+            <p class="hint">The video's title is used to find lyrics. Some videos block embedding, so try the official audio upload if one won't play.</p>
+          </div>
+
+          <div class="tabpanel" data-panel="clock" hidden>
+            <p class="hint">Playing from Spotify, a speaker, or a phone? Pick a song above, then press <kbd>Space</kbd> as you hit play on the other device. Press <kbd>T</kbd> the instant the <em>next</em> line starts to lock the sync.</p>
+            <button class="btn wide" id="useClock" type="button">Use the stage clock</button>
+          </div>
+        </details>
+        <p class="source-line">Playing: <span id="sourceName">Stage clock</span></p>
       </section>
 
       <section class="card">
@@ -99,7 +117,7 @@
           <input id="singer" type="text" placeholder="Singer's name" autocomplete="off" maxlength="40">
           <button class="btn ghost" type="submit">Add song</button>
         </form>
-        <p class="hint">Adds the song on stage right now. YouTube links are remembered; audio files need to be dropped in again.</p>
+        <p class="hint">Adds the song on stage right now, with its video and backing-track choice. Audio files need to be dropped in again.</p>
         <ol id="queue" class="queue"></ol>
         <button class="btn wide orange" id="nextUp" type="button" disabled>Next singer up</button>
       </section>
@@ -107,12 +125,12 @@
 
     <section class="stage" id="stage">
       <div class="yt-wrap bg" id="ytWrap" hidden><div id="ytPlayer"></div></div>
+      <div class="yt-inst" aria-hidden="true"><div id="ytInstPlayer"></div></div>
 
       <div class="stage-head">
         <div class="track">
           <div class="track-title" id="trackTitle">Pick a song</div>
-          <div class="track-artist" id="trackArtist">Search on the left, or drop an audio file to auto-match</div>
-          <div class="timing-source" id="timingStatus" aria-live="polite" hidden></div>
+          <div class="track-artist" id="trackArtist">Search for a song on the left. Its video is found for you.</div>
         </div>
         <div class="warn" id="warn" hidden></div>
       </div>
@@ -123,8 +141,8 @@
         <div class="welcome" id="welcome">
           <div class="welcome-big">Ready when you are, gator.</div>
           <ol>
-            <li>Drop in a song file, paste a YouTube link, or play it on another device.</li>
-            <li>Lyrics come from <a href="https://lrclib.net" target="_blank" rel="noopener">LRCLIB</a>, an open database with millions of time-synced songs.</li>
+            <li>Search for a song. Results with word-by-word timing are listed first.</li>
+            <li>The music video is found automatically. Flip on <strong>Instrumental</strong> to sing over the backing track.</li>
             <li>Lines light up orange as you sing. Click any line to jump to it.</li>
           </ol>
         </div>
@@ -160,6 +178,7 @@
 
   <audio id="audio" preload="auto"></audio>
   <script src="word-timing.js"></script>
+  <script src="media-finder.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

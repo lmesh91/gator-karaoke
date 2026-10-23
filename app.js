@@ -117,8 +117,23 @@ function parseLRC(src) {
    for audio playing on another device.
    ====================================================================== */
 const audio = $('#audio');
-let yt = null, ytReadyPromise = null, ytVideoId = null, ytLast = { raw: -1, at: 0 };
+let yt = null, ytReadyPromise = null, ytVideoId = null;
 let ytMode = store.get('gkc.ytMode', 'bg');
+// Instrumental mode: a second, hidden player supplies the audio and the clock,
+// while the music video (if any) plays muted and follows it.
+let ytInst = null, ytInstReady = null, instVideoId = null, instOn = false;
+const audioPlayer = () => (instOn && ytInst ? ytInst : yt);
+const ytClock = new Map();
+
+// getCurrentTime() advances in coarse steps; interpolate between them while playing.
+function playerTime(p) {
+  if (!p || !p.getCurrentTime) return 0;
+  const raw = p.getCurrentTime() || 0, now = performance.now();
+  const last = ytClock.get(p);
+  if (!last || raw !== last.raw) ytClock.set(p, { raw, at: now });
+  const playing = p.getPlayerState && p.getPlayerState() === 1;
+  return playing ? raw + Math.min(1, (now - ytClock.get(p).at) / 1000) : raw;
+}
 
 const media = {
   kind: 'clock',
@@ -127,40 +142,46 @@ const media = {
 
   time() {
     if (this.kind === 'file') return audio.currentTime || 0;
-    if (this.kind === 'yt') {
-      if (!yt || !yt.getCurrentTime) return 0;
-      const raw = yt.getCurrentTime() || 0, now = performance.now();
-      if (raw !== ytLast.raw) ytLast = { raw, at: now };
-      return this.playing() ? raw + Math.min(1, (now - ytLast.at) / 1000) : raw;
-    }
+    if (this.kind === 'yt') return playerTime(audioPlayer());
     const c = this.clock;
     return c.startedAt == null ? c.base : c.base + (performance.now() - c.startedAt) / 1000;
   },
   duration() {
     if (this.kind === 'file') return isFinite(audio.duration) ? audio.duration : 0;
-    if (this.kind === 'yt') return (yt && yt.getDuration && yt.getDuration()) || 0;
+    if (this.kind === 'yt') { const p = audioPlayer(); return (p && p.getDuration && p.getDuration()) || 0; }
     return state.track ? state.track.duration || 0 : 0;
   },
   playing() {
     if (this.kind === 'file') return !audio.paused && !audio.ended;
-    if (this.kind === 'yt') return !!(yt && yt.getPlayerState && yt.getPlayerState() === 1);
+    if (this.kind === 'yt') { const p = audioPlayer(); return !!(p && p.getPlayerState && p.getPlayerState() === 1); }
     return this.clock.startedAt != null;
   },
   play() {
     if (this.kind === 'file') { if (audio.src) audio.play().catch(() => {}); return; }
-    if (this.kind === 'yt') { yt && yt.playVideo && yt.playVideo(); return; }
+    if (this.kind === 'yt') {
+      const p = audioPlayer();
+      if (p && p.playVideo) p.playVideo();
+      if (instOn && p !== yt && yt && ytVideoId && yt.playVideo) { yt.mute(); yt.playVideo(); }
+      return;
+    }
     if (this.clock.startedAt == null) this.clock.startedAt = performance.now();
   },
   pause() {
     if (this.kind === 'file') { audio.pause(); return; }
-    if (this.kind === 'yt') { yt && yt.pauseVideo && yt.pauseVideo(); return; }
+    if (this.kind === 'yt') { [yt, ytInst].forEach((p) => p && p.pauseVideo && p.pauseVideo()); return; }
     if (this.clock.startedAt != null) { this.clock.base = this.time(); this.clock.startedAt = null; }
   },
   toggle() { this.playing() ? this.pause() : this.play(); },
   seek(t) {
     t = Math.max(0, t);
     if (this.kind === 'file') { if (audio.src) audio.currentTime = t; return; }
-    if (this.kind === 'yt') { yt && yt.seekTo && yt.seekTo(t, true); ytLast = { raw: -1, at: 0 }; return; }
+    if (this.kind === 'yt') {
+      const p = audioPlayer();
+      if (p && p.seekTo) p.seekTo(t, true);
+      if (instOn && p !== yt && yt && ytVideoId && yt.seekTo) yt.seekTo(t, true);
+      ytClock.clear();
+      return;
+    }
     this.clock.base = t;
     if (this.clock.startedAt != null) this.clock.startedAt = performance.now();
   },
@@ -168,11 +189,38 @@ const media = {
     if (this.kind !== kind) this.pause();
     this.kind = kind;
     this.name = name;
-    $('#sourceName').textContent = name;
     $('#ytWrap').hidden = kind !== 'yt';
+    renderSource();
+    loadOffset();
     checkDuration();
   },
+  // True when the person brought their own audio (a file, a pasted link, or
+  // another device); automatic video choices then must not replace it.
+  own: false,
 };
+
+function renderSource() {
+  let label = media.name;
+  if (media.kind === 'yt' && instOn && mediaState.inst) {
+    label = `Instrumental · ${mediaState.inst.title}${ytVideoId ? ' (video muted)' : ''}`;
+  }
+  $('#sourceName').textContent = label;
+}
+
+// Keep a muted music video in step with the instrumental that is playing.
+let lastFollow = 0;
+function followVideo(now) {
+  if (media.kind !== 'yt' || !instOn || !ytInst || !yt || !ytVideoId || !yt.getPlayerState || now - lastFollow < 500) return;
+  lastFollow = now;
+  const playing = ytInst.getPlayerState() === 1;
+  const vs = yt.getPlayerState();
+  if (!yt.isMuted()) yt.mute();
+  if (playing && vs !== 1 && vs !== 3 && vs !== 0) yt.playVideo();
+  else if (!playing && vs === 1) yt.pauseVideo();
+  const t = playerTime(ytInst);
+  const end = yt.getDuration ? yt.getDuration() : 0;
+  if (playing && end && t < end - 1 && Math.abs((yt.getCurrentTime() || 0) - t) > 0.8) yt.seekTo(t, true);
+}
 
 /* ---------- local files ---------- */
 let objectUrl = null;
@@ -181,8 +229,11 @@ async function loadFile(file) {
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   objectUrl = URL.createObjectURL(file);
   audio.src = objectUrl;
+  stopInstrumental();
+  media.own = true;
   media.use('file', file.name);
   selectTab('file');
+  $('#ownAudio').open = true;
 
   const tags = await readId3(file).catch(() => null);
   let query;
@@ -251,14 +302,15 @@ function loadYTApi() {
 let ytSearched = null;
 let ytMetadataTimer = null, ytMetadataAttempts = 0;
 let ytLookup = null;
+// searchLyrics: true for a link the person pasted, whose title finds the lyrics.
 async function loadYouTube(id, { searchLyrics = true } = {}) {
   clearTimeout(ytMetadataTimer);
   ytMetadataAttempts = 0;
   ytVideoId = id;
   ytSearched = searchLyrics ? null : id;
   ytLookup = null;
+  if (searchLyrics) { stopInstrumental(); selectTab('yt'); }
   media.use('yt', 'YouTube');
-  selectTab('yt');
   applyYtMode();
   const YT = await loadYTApi();
   if (!yt) {
@@ -271,6 +323,8 @@ async function loadYouTube(id, { searchLyrics = true } = {}) {
           onStateChange: onYtState,
           onError: (e) => {
             const blocked = e.data === 101 || e.data === 150;
+            // An automatically chosen video falls through to the next candidate.
+            if (!media.own && mediaState.video && mediaState.video.id === ytVideoId) { nextVideo(ytVideoId); return; }
             setWarn(blocked ? 'This video doesn’t allow embedding. Try a different upload (e.g. the “Topic” or lyric-video version).' : 'YouTube couldn’t play that video.');
           },
         },
@@ -279,7 +333,23 @@ async function loadYouTube(id, { searchLyrics = true } = {}) {
   } else {
     yt.cueVideoById(id);
   }
+  if (instOn) yt.mute(); else yt.unMute();
   onYtState();
+}
+
+function ensureInstPlayer() {
+  ytInstReady = ytInstReady || loadYTApi().then((YT) => new Promise((resolve) => {
+    const p = new YT.Player('ytInstPlayer', {
+      width: 200, height: 113,
+      playerVars: { playsinline: 1, rel: 0, controls: 0, iv_load_policy: 3 },
+      events: {
+        onReady: () => { ytInst = p; resolve(p); },
+        onStateChange: () => checkDuration(),
+        onError: () => { if (instVideoId) nextInstrumental(instVideoId); },
+      },
+    });
+  }));
+  return ytInstReady;
 }
 
 function youtubeIdentity(data) {
@@ -304,7 +374,7 @@ function onYtState() {
     return;
   }
   media.name = `YouTube · ${data.title}`;
-  $('#sourceName').textContent = media.name;
+  renderSource();
   const identity = youtubeIdentity(data);
   if (ytSearched !== ytVideoId) {
     ytSearched = ytVideoId;
@@ -359,10 +429,26 @@ const state = { track: null, lines: [], offset: 0, results: [], focus: -2, activ
 let searchCtl = null;
 let trackVersion = 0;
 
-async function search(q) {
-  if (searchCtl) searchCtl.abort();
-  searchCtl = new AbortController();
-  const { signal } = searchCtl;
+// Results from both sources share one shape. key is stable across sessions
+// (LRCLIB ids keep their old form so saved sync offsets still apply).
+function fromLrclib(r) {
+  const word = !!r.syncedLyrics && /<\d+:\d+/.test(r.syncedLyrics);
+  return {
+    key: String(r.id), source: 'lrclib', id: r.id,
+    trackName: r.trackName, artistName: r.artistName, albumName: r.albumName, duration: Number(r.duration) || 0,
+    timing: word ? 'word' : r.syncedLyrics ? 'line' : 'plain', instrumental: !!r.instrumental,
+    syncedLyrics: r.syncedLyrics, plainLyrics: r.plainLyrics,
+  };
+}
+function fromWordRecord(r) {
+  return {
+    key: `wt:${r.id || r.lyricsUrl}`, source: 'wordtiming', id: r.id, isrc: r.isrc,
+    trackName: r.track_name, artistName: r.artist_name, albumName: r.album_name, duration: Number(r.duration) || 0,
+    timing: 'word', lyricsUrl: r.lyricsUrl,
+  };
+}
+
+async function searchLrclib(q, signal) {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(`${API}/search?q=${encodeURIComponent(q)}`, { signal });
     if (res.ok) return res.json();
@@ -373,50 +459,87 @@ async function search(q) {
   }
 }
 
+// Word-timed results always come first, then line-timed, then untimed.
+function mergeResults(lrclib, word) {
+  const lrc = lrclib.map(fromLrclib);
+  const by = (t) => lrc.filter((r) => r.timing === t);
+  return [...word.map(fromWordRecord), ...by('word'), ...by('line'), ...by('plain')];
+}
+
 async function runSearch(q, { quiet = false } = {}) {
   const status = $('#searchStatus');
   q = q.trim();
   if (!q) return [];
+  if (searchCtl) searchCtl.abort();
+  const ctl = searchCtl = new AbortController();
   status.className = 'status';
   status.textContent = 'Searching the swamp…';
-  try {
-    const list = await search(q);
-    state.results = list;
-    renderResults();
-    if (!quiet) status.textContent = list.length ? '' : 'No matches. Try just the song title, or the artist + title.';
-    return list;
-  } catch (e) {
-    if (e.name === 'AbortError') return [];
+  const [lrc, word] = await Promise.allSettled([
+    searchLrclib(q, ctl.signal),
+    WordTiming.search(q, { signal: ctl.signal }),
+  ]);
+  if (searchCtl !== ctl) return [];
+  if (lrc.status === 'rejected' && word.status === 'rejected') {
     status.className = 'status err';
-    status.textContent = `Couldn’t reach the lyrics database (${e.message}).`;
+    status.textContent = `Couldn’t reach the lyrics databases (${lrc.reason && lrc.reason.message}).`;
     return [];
   }
+  const list = mergeResults(lrc.status === 'fulfilled' ? lrc.value : [], word.status === 'fulfilled' ? word.value : []);
+  state.results = list;
+  state.searchNotes = { word: word.status === 'rejected', lrclib: lrc.status === 'rejected' };
+  renderResults();
+  if (!quiet) status.textContent = list.length ? '' : 'No matches. Try just the song title, or the artist + title.';
+  return list;
 }
 
+const RESULT_GROUPS = [
+  { timing: 'word', cls: 'word', label: 'Word-by-word', sub: 'every word lights up on time' },
+  { timing: 'line', cls: 'sync', label: 'Line-by-line', sub: 'word fill is estimated' },
+  { timing: 'plain', cls: '', label: 'No timing', sub: 'read along' },
+];
+
 function renderResults() {
-  const ul = $('#results');
+  const box = $('#results');
   const onlySynced = $('#syncedOnly').checked;
-  const list = state.results.filter((r) => !r.instrumental && (!onlySynced || r.syncedLyrics));
-  ul.replaceChildren(...list.slice(0, 30).map((r) => {
-    const li = document.createElement('li');
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'result' + (state.track && state.track.id === r.id ? ' on' : '');
-    const title = el('span', 'r-title', r.trackName);
-    const meta = el('span', 'r-meta', [r.artistName, r.albumName].filter(Boolean).join(' · '));
-    const side = el('span', 'r-side');
-    const badge = r.syncedLyrics
-      ? el('span', `badge ${/<\d+:\d+/.test(r.syncedLyrics) ? 'word' : 'sync'}`, /<\d+:\d+/.test(r.syncedLyrics) ? 'word sync' : 'synced')
-      : el('span', 'badge plain', 'plain');
-    side.append(badge, el('span', '', fmt(r.duration)));
-    b.append(title, side, meta);
-    b.addEventListener('click', () => loadTrack(r));
-    li.append(b);
-    return li;
-  }));
+  const list = state.results.filter((r) => !r.instrumental && (!onlySynced || r.timing !== 'plain'));
+  const groups = RESULT_GROUPS.map((g) => {
+    const items = list.filter((r) => r.timing === g.timing).slice(0, 25);
+    if (!items.length) return null;
+    const section = el('section', 'r-group');
+    const head = el('h3', `r-group-head ${g.cls}`, g.label);
+    head.append(el('span', '', g.sub));
+    const ul = el('ul', 'r-list');
+    ul.append(...items.map(resultItem));
+    section.append(head, ul);
+    return section;
+  }).filter(Boolean);
+  if (state.searchNotes && state.searchNotes.word && state.results.length) {
+    groups.unshift(el('p', 'hint', 'Word-by-word results couldn’t be loaded right now, so only LRCLIB results are shown.'));
+  }
+  if (state.searchNotes && state.searchNotes.lrclib && state.results.length) {
+    groups.push(el('p', 'hint', 'LRCLIB didn’t respond, so line-by-line results are missing.'));
+  }
+  box.replaceChildren(...groups);
   if (state.results.length && !list.length) {
     $('#searchStatus').textContent = 'Only unsynced lyrics found. Untick “Synced lyrics only” to read along without timing.';
   }
+}
+
+function resultItem(r) {
+  const li = document.createElement('li');
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'result' + (state.track && state.track.key === r.key ? ' on' : '');
+  const title = el('span', 'r-title', r.trackName);
+  const meta = el('span', 'r-meta', [r.artistName, r.albumName].filter(Boolean).join(' · '));
+  const side = el('span', 'r-side');
+  const badge = r.timing === 'word' ? el('span', 'badge word', 'word')
+    : r.timing === 'line' ? el('span', 'badge sync', 'line') : el('span', 'badge plain', 'plain');
+  side.append(badge, el('span', '', fmt(r.duration)));
+  b.append(title, side, meta);
+  b.addEventListener('click', () => loadTrack(r));
+  li.append(b);
+  return li;
 }
 
 function el(tag, cls, text) {
@@ -435,13 +558,13 @@ async function autoFind(q, duration, tags, isCurrent = () => true) {
   if (!current()) return;
   if (!list.length && tags && tags.title) { $('#q').value = tags.title; list = await runSearch(tags.title, { quiet: true }); }
   if (!current()) return;
-  const synced = list.filter((r) => r.syncedLyrics && !r.instrumental);
+  const synced = list.filter((r) => (r.timing ? r.timing !== 'plain' : r.syncedLyrics) && !r.instrumental);
   const status = $('#searchStatus');
   if (!synced.length) {
     status.textContent = list.length ? 'Found the song but no synced lyrics. Pick one below to read along.' : 'No automatic match. Search for it yourself above.';
     return;
   }
-  const scored = synced.map((r, i) => ({ r, score: (duration ? Math.abs(r.duration - duration) : 0) + i * 0.4 }));
+  const scored = synced.map((r, i) => ({ r, score: (duration ? Math.abs(r.duration - duration) : 0) + (r.timing === 'word' ? 0 : 2) + i * 0.4 }));
   scored.sort((a, b) => a.score - b.score);
   const best = scored[0];
   const diff = duration ? Math.abs(best.r.duration - duration) : 0;
@@ -449,7 +572,7 @@ async function autoFind(q, duration, tags, isCurrent = () => true) {
     const identity = tags && tags.title && tags.artist
       ? { trackName: tags.title, artistName: tags.artist }
       : null;
-    loadTrack(best.r, identity);
+    loadTrack(best.r, identity, { auto: true });
     status.textContent = `Auto-matched “${best.r.trackName}”. Wrong one? Pick another below.`;
     return best.r;
   } else {
@@ -465,36 +588,79 @@ const viewport = $('#viewport');
 const countdown = $('#countdown');
 let wordTimingCtl = null;
 
-function loadTrack(r, identity = null) {
+// opts.auto: chosen automatically for the person's own audio, so their source stays.
+function loadTrack(r, identity = null, { auto = false, prefer = null } = {}) {
   trackVersion++;
+  const version = trackVersion;
   if (wordTimingCtl) wordTimingCtl.abort();
   wordTimingCtl = null;
   state.track = r;
-  state.offset = store.get(`gkc.off.${r.id}`, 0);
   state.lines = r.syncedLyrics ? parseLRC(r.syncedLyrics) : [];
   state.active = state.focus = -2;
   $('#trackTitle').textContent = r.trackName;
   $('#trackArtist').textContent = [r.artistName, r.albumName].filter(Boolean).join(' · ');
   $('#welcome').hidden = true;
   const plain = $('#plain');
+  const pending = r.source === 'wordtiming';
   plain.hidden = !!state.lines.length;
-  plain.textContent = state.lines.length ? '' : (r.plainLyrics || 'No lyrics text for this one.');
+  plain.textContent = state.lines.length ? '' : pending ? 'Loading lyrics…' : (r.plainLyrics || 'No lyrics text for this one.');
   renderLines();
-  renderOffset();
+  loadOffset();
   renderResults();
   checkDuration();
   document.title = `${r.trackName} · Gator Karaoke Club`;
   const vocals = state.lines.filter((L) => !L.gap);
-  if (vocals.length && vocals.every((L) => L.wordSync)) {
-    setTimingStatus('Word timing from LRCLIB');
-  } else {
+  if (pending) {
+    loadWordTimedTrack(r, version);
+  } else if (vocals.length && vocals.every((L) => L.wordSync)) {
+    setTimingStatus('On stage: word-by-word timing from LRCLIB', '', null, 'word');
+  } else if (auto) {
+    // Matched automatically, so look for word timings of the same recording.
     startWordTiming(r, identity ? { ...r, ...identity } : r);
+  } else {
+    setTimingStatus(vocals.length ? 'On stage: line-by-line timing from LRCLIB · word fill is estimated' : 'On stage: no timing for this one · read along');
+  }
+  findMediaFor(r, { place: !auto && !(media.own && media.kind === 'clock'), prefer });
+}
+
+async function loadWordTimedTrack(track, version) {
+  const ctl = wordTimingCtl = new AbortController();
+  const retry = () => { if (state.track === track) loadWordTimedTrack(track, trackVersion); };
+  setTimingStatus('Loading word-by-word timing…', '', null, 'word');
+  try {
+    const result = await WordTiming.load(track, { signal: ctl.signal });
+    if (version !== trackVersion || wordTimingCtl !== ctl) return;
+    showLines(result.lines);
+    setTimingStatus('On stage: word-by-word timing from ', result.source, null, 'word');
+  } catch (e) {
+    if (ctl.signal.aborted || version !== trackVersion) return;
+    // Fall back to LRCLIB's line timing for the same recording.
+    const params = new URLSearchParams({ track_name: track.trackName, artist_name: track.artistName, duration: String(Math.round(track.duration || 0)) });
+    if (track.albumName) params.set('album_name', track.albumName);
+    const fallback = await fetch(`${API}/get?${params}`, { signal: ctl.signal }).then((res) => (res.ok ? res.json() : null)).catch(() => null);
+    if (ctl.signal.aborted || version !== trackVersion) return;
+    if (fallback && fallback.syncedLyrics) {
+      showLines(parseLRC(fallback.syncedLyrics));
+      setTimingStatus('Word timing didn’t load, so this uses line-by-line timing from LRCLIB', '', retry);
+    } else {
+      $('#plain').hidden = false;
+      $('#plain').textContent = (fallback && fallback.plainLyrics) || 'Couldn’t load these lyrics.';
+      setTimingStatus('Couldn’t load the word timing for this song', '', retry);
+    }
   }
 }
 
-function setTimingStatus(message, source = '', retry = null) {
+function showLines(lines) {
+  state.lines = lines;
+  state.active = state.focus = -2;
+  $('#plain').hidden = !!lines.length;
+  renderLines();
+}
+
+function setTimingStatus(message, source = '', retry = null, tone = '') {
   const status = $('#timingStatus');
   status.hidden = false;
+  status.className = `timing-source${tone ? ` ${tone}` : ''}`;
   status.textContent = message;
   if (source) {
     const a = el('a', '', source);
@@ -512,16 +678,16 @@ function setTimingStatus(message, source = '', retry = null) {
 }
 
 function startWordTiming(track, identity) {
-  if (state.track !== track) return;
+  if (state.track !== track || track.source === 'wordtiming') return;
   if (wordTimingCtl) wordTimingCtl.abort();
   const ctl = wordTimingCtl = new AbortController();
-  setTimingStatus(state.lines.length ? 'Estimated word timing' : 'No timed lyrics');
+  setTimingStatus(state.lines.length ? 'On stage: line-by-line timing · looking for word timing…' : 'No timed lyrics');
   upgradeWordTiming(track, ctl, identity);
 }
 
 async function upgradeWordTiming(track, ctl, identity) {
   const timeout = setTimeout(() => ctl.abort(), 22000);
-  const fallback = () => state.lines.length ? 'Estimated word timing' : 'No timed lyrics';
+  const fallback = () => state.lines.length ? 'On stage: line-by-line timing · word fill is estimated' : 'No timed lyrics';
   const retry = () => startWordTiming(track, identity);
   try {
     const result = await WordTiming.lookup(identity, { signal: ctl.signal });
@@ -530,11 +696,8 @@ async function upgradeWordTiming(track, ctl, identity) {
       setTimingStatus(fallback() + ' · word timings unavailable for this version', '', retry);
       return;
     }
-    state.lines = result.lines;
-    state.active = state.focus = -2;
-    $('#plain').hidden = true;
-    renderLines();
-    setTimingStatus('Word timing from ', result.source);
+    showLines(result.lines);
+    setTimingStatus('On stage: word-by-word timing from ', result.source, null, 'word');
   } catch {
     if (wordTimingCtl === ctl && state.track === track) setTimingStatus(fallback() + ' · word timing service unavailable', '', retry);
   } finally {
@@ -641,6 +804,7 @@ function frame() {
   $('#curTime').textContent = fmt(mt);
   $('#durTime').textContent = fmt(dur);
   $('#playBtn').classList.toggle('on', media.playing());
+  followVideo(performance.now());
 
   requestAnimationFrame(frame);
 }
@@ -657,7 +821,8 @@ function clearWords(L) {
 /* ---------- sync controls ---------- */
 function setOffset(v) {
   state.offset = Math.round(v * 100) / 100;
-  if (state.track) store.set(`gkc.off.${state.track.id}`, state.offset);
+  const key = offsetKey();
+  if (key) store.set(key, state.offset);
   state.active = state.focus = -2;
   state.lines.forEach(clearWords);
   renderOffset();
@@ -697,6 +862,184 @@ function checkDuration() {
 }
 
 /* ======================================================================
+   Video & backing track — found automatically for the chosen lyrics
+   ====================================================================== */
+const mediaState = { track: null, videos: [], instrumentals: [], video: null, inst: null, ctl: null, failed: new Set(), searching: false, error: '', showAll: false };
+let instPref = store.get('gkc.instrumental', false);
+
+function setMediaStatus(msg, err = false) {
+  const status = $('#mediaStatus');
+  status.className = `status${err ? ' err' : ''}`;
+  status.textContent = msg;
+}
+
+// place: cue the best video automatically (false when the person's own audio should stay).
+async function findMediaFor(track, { place = true, prefer = null } = {}) {
+  if (mediaState.ctl) mediaState.ctl.abort();
+  const ctl = new AbortController();
+  stopInstrumental();
+  Object.assign(mediaState, { track, videos: [], instrumentals: [], video: null, inst: null, ctl, failed: new Set(), searching: true, showAll: false });
+  setMediaStatus('Finding the video and backing track…');
+  renderMedia();
+  let found;
+  try {
+    found = await MediaFinder.find(track, { signal: ctl.signal });
+  } catch {
+    if (ctl.signal.aborted || mediaState.ctl !== ctl) return;
+    found = { videos: [], instrumentals: [], errors: { search: true } };
+  }
+  if (mediaState.ctl !== ctl || state.track !== track) return;
+  mediaState.searching = false;
+  const saved = (id, kind) => ({ id, title: 'Saved with the queue', author: '', length: 0, kind, diff: null });
+  if (prefer && prefer.yt && !found.videos.some((v) => v.id === prefer.yt)) found.videos.unshift(saved(prefer.yt, 'Saved video'));
+  if (prefer && prefer.inst && !found.instrumentals.some((v) => v.id === prefer.inst)) found.instrumentals.unshift(saved(prefer.inst, 'Saved instrumental'));
+  mediaState.videos = found.videos;
+  mediaState.instrumentals = found.instrumentals;
+  mediaState.inst = (prefer && prefer.inst && found.instrumentals.find((v) => v.id === prefer.inst)) || found.instrumentals[0] || null;
+
+  const searchDown = found.errors && found.errors.search;
+  if (!found.videos.length) {
+    setMediaStatus(searchDown ? 'YouTube search isn’t responding right now. Use your own audio below.' : 'No matching video found. Use your own audio below.', !!searchDown);
+  } else if (place) {
+    const pick = (prefer && prefer.yt && found.videos.find((v) => v.id === prefer.yt)) || found.videos[0];
+    chooseVideo(pick);
+    const fit = pick.diff != null && pick.diff <= 2 ? ', matching the lyrics’ length' : '';
+    setMediaStatus(`Cued the ${pick.kind.toLowerCase()}${fit}. Press play when you’re ready.`);
+  } else {
+    setMediaStatus('Your own audio is playing. Pick a video below to switch to it.');
+  }
+  if (mediaState.inst && (prefer ? prefer.instOn : instPref) && (place || media.kind === 'yt')) setInstrumental(true);
+  renderMedia();
+}
+
+function chooseVideo(v) {
+  mediaState.video = v;
+  media.own = false;
+  loadYouTube(v.id, { searchLyrics: false });
+  renderMedia();
+}
+
+function nextVideo(failedId) {
+  mediaState.failed.add(failedId);
+  const next = mediaState.videos.find((v) => !mediaState.failed.has(v.id));
+  if (next) {
+    setMediaStatus('That video can’t be played here, so the next match was cued instead.');
+    chooseVideo(next);
+  } else {
+    setMediaStatus('None of the videos found can be played here. Use your own audio below.', true);
+    renderMedia();
+  }
+}
+
+function stopInstrumental() {
+  if (!instOn) return;
+  instOn = false;
+  if (ytInst && ytInst.pauseVideo) ytInst.pauseVideo();
+  if (yt && yt.unMute) yt.unMute();
+  renderSource();
+  loadOffset();
+  renderMedia();
+}
+
+async function setInstrumental(on) {
+  if (!on) { stopInstrumental(); checkDuration(); return; }
+  const pick = mediaState.inst;
+  if (!pick) return;
+  const wasPlaying = media.playing();
+  const at = media.time();
+  media.pause();
+  instOn = true;
+  renderMedia();
+  const p = await ensureInstPlayer();
+  if (!instOn || mediaState.inst !== pick) return;
+  if (instVideoId !== pick.id) { instVideoId = pick.id; p.cueVideoById(pick.id); }
+  if (media.kind !== 'yt') { media.own = false; media.use('yt', 'YouTube'); }
+  if (yt && ytVideoId && yt.mute) yt.mute();
+  ytClock.clear();
+  renderSource();
+  loadOffset();
+  checkDuration();
+  if (wasPlaying) { media.seek(at); media.play(); }
+}
+
+function chooseInstrumental(v) {
+  mediaState.inst = v;
+  instVideoId = null;
+  if (instOn) { instOn = false; setInstrumental(true); } else setInstrumental(true);
+  renderMedia();
+}
+
+function nextInstrumental(failedId) {
+  mediaState.failed.add(failedId);
+  const next = mediaState.instrumentals.find((v) => !mediaState.failed.has(v.id));
+  if (next) chooseInstrumental(next);
+  else { stopInstrumental(); setMediaStatus('None of the instrumentals found can be played here.', true); }
+}
+
+function mediaItem(v, on, onClick) {
+  const li = document.createElement('li');
+  const b = el('button', `media${on ? ' on' : ''}`);
+  b.type = 'button';
+  const img = el('img');
+  img.src = `https://i.ytimg.com/vi/${v.id}/mqdefault.jpg`;
+  img.alt = '';
+  img.loading = 'lazy';
+  const text = el('span', 'm-text');
+  const meta = el('span', 'm-meta', [v.kind, v.author, v.length ? fmt(v.length) : ''].filter(Boolean).join(' · '));
+  const D = mediaState.track && mediaState.track.duration;
+  if (v.length && D) {
+    const d = Math.round(v.length - D);
+    meta.append(document.createTextNode(' · '),
+      Math.abs(d) <= 2 ? el('span', 'fit', 'matches lyrics') : el('span', 'off', `${Math.abs(d)}s ${d > 0 ? 'longer' : 'shorter'}`));
+  }
+  text.append(el('span', 'm-title', v.title), meta);
+  b.append(img, text);
+  b.addEventListener('click', onClick);
+  li.append(b);
+  return li;
+}
+
+function renderMedia() {
+  const { videos, instrumentals } = mediaState;
+  const current = media.kind === 'yt' ? ytVideoId : null;
+  let shown = mediaState.showAll ? videos : videos.slice(0, 3);
+  const playing = videos.find((v) => v.id === current);
+  if (playing && !shown.includes(playing)) shown = [...shown, playing];
+  const items = shown.map((v) => mediaItem(v, v.id === current, () => { setMediaStatus(''); chooseVideo(v); }));
+  if (videos.length > shown.length) {
+    const li = document.createElement('li');
+    const more = el('button', 'media-more', `Show ${videos.length - shown.length} more`);
+    more.type = 'button';
+    more.addEventListener('click', () => { mediaState.showAll = true; renderMedia(); });
+    li.append(more);
+    items.push(li);
+  }
+  $('#videoList').replaceChildren(...items);
+
+  const toggle = $('#instToggle');
+  toggle.disabled = !instrumentals.length;
+  toggle.checked = instOn;
+  $('#instCount').textContent = mediaState.searching ? '' : instrumentals.length ? `${instrumentals.length} found` : mediaState.track ? 'none found' : '';
+  const list = $('#instList');
+  list.hidden = !instOn || !instrumentals.length;
+  list.replaceChildren(...instrumentals.map((v) => mediaItem(v, mediaState.inst === v, () => chooseInstrumental(v))));
+}
+
+/* ---------- sync offsets, remembered per song and per audio source ---------- */
+function offsetKey() {
+  if (!state.track) return null;
+  const src = media.kind === 'yt' ? (instOn ? instVideoId : ytVideoId) : null;
+  return `gkc.off.${state.track.key}${src ? `@${src}` : ''}`;
+}
+function loadOffset() {
+  const key = offsetKey();
+  state.offset = key ? store.get(key, 0) : 0;
+  state.active = state.focus = -2;
+  if (state.lines) state.lines.forEach((L) => L.wordEls && clearWords(L));
+  renderOffset();
+}
+
+/* ======================================================================
    Singer queue
    ====================================================================== */
 let queue = store.get('gkc.queue', []);
@@ -705,7 +1048,8 @@ function renderQueue() {
   ol.replaceChildren(...queue.map((q, i) => {
     const li = document.createElement('li');
     const mid = el('div');
-    mid.append(el('div', 'q-name', q.singer), el('div', 'q-song', `${q.track} · ${q.artist}${q.yt ? ' · ▶ YouTube' : ''}`));
+    const extra = q.instOn ? ' · instrumental' : q.yt ? ' · video' : '';
+    mid.append(el('div', 'q-name', q.singer), el('div', 'q-song', `${q.track} · ${q.artist}${extra}`));
     const x = el('button', 'q-x', '×');
     x.type = 'button';
     x.setAttribute('aria-label', `Remove ${q.singer}`);
@@ -724,15 +1068,22 @@ async function nextSinger() {
   if (!q) return;
   $('#nowWrap').hidden = false;
   $('#nowSinger').textContent = q.singer;
+  const prefer = { yt: q.yt || null, inst: q.inst || null, instOn: !!q.instOn };
   try {
-    const r = await fetch(`${API}/get/${q.trackId}`).then((res) => res.json());
-    loadTrack(r);
+    let track = q.song;
+    // LRCLIB lyrics are fetched again rather than kept in storage.
+    if (!track || track.source === 'lrclib') {
+      track = fromLrclib(await fetch(`${API}/get/${track ? track.id : q.trackId}`).then((res) => {
+        if (!res.ok) throw new Error(`LRCLIB returned ${res.status}`);
+        return res.json();
+      }));
+    }
+    media.own = false;
+    loadTrack(track, null, { prefer });
+    media.seek(0);
   } catch {
     setWarn('Couldn’t fetch the lyrics for that queued song.');
   }
-  if (q.yt) loadYouTube(q.yt, { searchLyrics: false });
-  else if (media.kind === 'file') { media.pause(); media.use('clock', 'Stage clock'); media.seek(0); setWarn('Drop in the audio file for this song, or play it from another device.'); }
-  else media.seek(0);
 }
 
 /* ======================================================================
@@ -762,12 +1113,26 @@ $('#ytForm').addEventListener('submit', (e) => {
   e.preventDefault();
   const id = ytId($('#ytUrl').value);
   if (!id) { setWarn('That doesn’t look like a YouTube link.'); return; }
+  media.own = true;
+  mediaState.video = null;
   loadYouTube(id);
+  renderMedia();
+});
+$('#instToggle').addEventListener('change', (e) => {
+  instPref = e.target.checked;
+  store.set('gkc.instrumental', instPref);
+  setInstrumental(instPref);
 });
 $$('#ytMode button').forEach((b) => b.addEventListener('click', () => { ytMode = b.dataset.mode; store.set('gkc.ytMode', ytMode); applyYtMode(); }));
 applyYtMode();
 
-$('#useClock').addEventListener('click', () => { media.use('clock', 'Stage clock'); media.seek(0); });
+$('#useClock').addEventListener('click', () => {
+  stopInstrumental();
+  media.own = true;
+  media.use('clock', 'Stage clock');
+  media.seek(0);
+  renderMedia();
+});
 
 let debounce;
 $('#searchForm').addEventListener('submit', (e) => { e.preventDefault(); clearTimeout(debounce); runSearch($('#q').value); });
@@ -783,7 +1148,11 @@ $('#queueForm').addEventListener('submit', (e) => {
   const singer = $('#singer').value.trim();
   if (!singer) { $('#singer').focus(); return; }
   if (!state.track) { setWarn('Load a song first, then add it to the queue.'); return; }
-  queue.push({ singer, trackId: state.track.id, track: state.track.trackName, artist: state.track.artistName, yt: media.kind === 'yt' ? ytVideoId : null });
+  const { syncedLyrics, plainLyrics, ...song } = state.track;
+  queue.push({
+    singer, song, trackId: state.track.id, track: state.track.trackName, artist: state.track.artistName,
+    yt: media.kind === 'yt' ? ytVideoId : null, inst: mediaState.inst ? mediaState.inst.id : null, instOn,
+  });
   $('#singer').value = '';
   saveQueue();
 });

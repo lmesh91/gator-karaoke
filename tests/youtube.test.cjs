@@ -19,7 +19,7 @@ function setup() {
     ytMetadataTimer: null, ytMetadataAttempts: 0, ytLookup: null,
     state: { track: null, lines: [], offset: 1.2 },
     yt: { getVideoData: () => metadata, getDuration: () => duration },
-    checkDuration() {}, $: () => ({}), clearTimeout() {},
+    checkDuration() {}, renderSource() {}, $: () => ({}), clearTimeout() {},
     setTimeout(fn) { timers.push(fn); return timers.length; },
     autoFind(...args) {
       calls.push(args.slice(0, 3));

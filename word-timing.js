@@ -46,16 +46,20 @@ const WordTiming = (() => {
     return parts.reduce((n, p) => n * 60 + Number(p), 0);
   }
 
+  function allowedUrl(value) {
+    try {
+      const url = new URL(value);
+      return url.protocol === 'https:' && ['lrc.red', 'lyrics.binimum.org'].includes(url.hostname);
+    } catch { return false; }
+  }
+
   function matchingCandidates(track, records) {
     if (!normalize(track.trackName) || !normalize(track.artistName)) return [];
     return records.filter((r) => {
       if (!r || typeof r !== 'object') return false;
       if (r.timing_type !== 'word' || normalize(r.track_name) !== normalize(track.trackName) || normalize(r.artist_name) !== normalize(track.artistName)) return false;
       if (track.duration > 0 && (!Number.isFinite(Number(r.duration)) || Math.abs(Number(r.duration) - track.duration) > 5)) return false;
-      try {
-        const url = new URL(r.lyricsUrl);
-        return url.protocol === 'https:' && ['lrc.red', 'lyrics.binimum.org'].includes(url.hostname);
-      } catch { return false; }
+      return allowedUrl(r.lyricsUrl);
     }).sort((a, b) => {
       const score = (r) => (track.duration > 0 ? Math.abs(Number(r.duration) - track.duration) : 0)
         + (normalize(r.album_name) === normalize(track.albumName) ? 0 : 1);
@@ -163,7 +167,35 @@ const WordTiming = (() => {
     return null;
   }
 
-  return { recordingIdentity, matchingCandidates, parseTTML, lookup };
+  // Free-text search for word-timed recordings, so they can be offered directly.
+  async function search(q, { signal } = {}) {
+    const data = await request(`${API}?${new URLSearchParams({ q })}`, signal);
+    const seen = new Set();
+    return (Array.isArray(data.results) ? data.results : []).filter((r) => {
+      if (!r || r.timing_type !== 'word' || !r.track_name || !r.artist_name || !allowedUrl(r.lyricsUrl)) return false;
+      const key = r.id || r.lyricsUrl;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  // Load the word-timed lyrics for a record returned by search().
+  async function load(record, { signal } = {}) {
+    if (!allowedUrl(record.lyricsUrl)) throw new Error('Unexpected lyrics address');
+    const key = `url:${record.lyricsUrl}`;
+    if (cache.has(key)) return cache.get(key);
+    const src = await request(record.lyricsUrl, signal, 'text');
+    if (typeof src !== 'string' || src.length > 2 * 1024 * 1024) throw new Error('Lyrics file is too large');
+    const lines = parseTTML(src);
+    if (!lines.length) throw new Error('No word timings in this lyrics file');
+    if (record.duration > 0 && lines[lines.length - 1].end > Number(record.duration) + 2) throw new Error('Lyrics run past the end of the recording');
+    const result = { lines, record, source: new URL(record.lyricsUrl).hostname === 'lrc.red' ? 'lrc.red' : 'BiniLyrics' };
+    cache.set(key, result);
+    return result;
+  }
+
+  return { recordingIdentity, matchingCandidates, parseTTML, lookup, search, load };
 })();
 
 if (typeof module !== 'undefined') module.exports = WordTiming;
