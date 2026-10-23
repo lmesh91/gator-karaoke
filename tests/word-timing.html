@@ -77,7 +77,40 @@ test('broken XML and line-only files do not qualify as word timing', () => {
   equal(WordTiming.parseTTML('<tt><broken></tt>').length, 0);
   equal(WordTiming.parseTTML(wrap('<p begin="1" end="5">One two</p>')).length, 0);
 });
-window.wordTimingResults = tests;
-document.querySelector('#results').textContent = tests.map((t) => `${t.passed ? 'PASS' : 'FAIL'} ${t.name}${t.error ? ': ' + t.error : ''}`).join('\n');
-document.body.dataset.failures = String(tests.filter((t) => !t.passed).length);
+async function testAsync(name, fn) {
+  try { await fn(); tests.push({ name, passed: true }); }
+  catch (error) { tests.push({ name, passed: false, error: error.message }); }
+}
+(async () => {
+  await testAsync('a failed BiniLyrics request recovers native word timing from the direct source', async () => {
+    const original = window.fetch;
+    const title = 'Direct fallback fixture';
+    const hit = { isrc: 'USRE10900252', title, artist: 'Test Singer', duration: 65 };
+    const song = { title, artist: 'Test Singer', duration: 65, lyrics: { sync: 'word' }, source: excerpt };
+    try {
+      window.fetch = async (url) => {
+        if (url.includes('lyrics-api.binimum.org')) throw Error('Primary provider unavailable');
+        return { ok: true, json: async () => url.includes('match.json') ? { hits: [hit] } : song };
+      };
+      const result = await WordTiming.lookup({ trackName: title, artistName: 'Test Singer', duration: 65 });
+      equal(result.source, 'lrc.red');
+      near(result.lines[0].words[0].end - result.lines[0].words[0].start, 2.224);
+    } finally { window.fetch = original; }
+  });
+  await testAsync('direct-source model estimates are not presented as native word timing', async () => {
+    const original = window.fetch;
+    const title = 'Model fixture';
+    try {
+      window.fetch = async (url) => ({ ok: true, json: async () => {
+        if (url.includes('lyrics-api.binimum.org')) return { results: [] };
+        if (url.includes('match.json')) return { hits: [{ isrc: 'USRE10900252', title, artist: 'Test Singer', duration: 65 }] };
+        return { title, artist: 'Test Singer', duration: 65, byModel: true, lyrics: { sync: 'word' }, source: excerpt };
+      } });
+      equal(await WordTiming.lookup({ trackName: title, artistName: 'Test Singer', duration: 65 }), null);
+    } finally { window.fetch = original; }
+  });
+  window.wordTimingResults = tests;
+  document.querySelector('#results').textContent = tests.map((t) => `${t.passed ? 'PASS' : 'FAIL'} ${t.name}${t.error ? ': ' + t.error : ''}`).join('\n');
+  document.body.dataset.failures = String(tests.filter((t) => !t.passed).length);
+})();
 </script>

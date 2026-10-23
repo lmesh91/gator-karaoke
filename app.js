@@ -249,7 +249,10 @@ function loadYTApi() {
 }
 
 let ytSearched = null;
+let ytMetadataTimer = null, ytMetadataAttempts = 0;
 async function loadYouTube(id, { searchLyrics = true } = {}) {
+  clearTimeout(ytMetadataTimer);
+  ytMetadataAttempts = 0;
   ytVideoId = id;
   ytSearched = searchLyrics ? null : id;
   media.use('yt', 'YouTube');
@@ -277,19 +280,32 @@ async function loadYouTube(id, { searchLyrics = true } = {}) {
   onYtState();
 }
 
+function youtubeIdentity(data) {
+  const title = cleanTitle(data.title);
+  const parts = title.split(/\s[-–—]\s/);
+  const artist = parts.length > 1 ? parts.shift() : (data.author || '').replace(/\s*-\s*Topic$/i, '').replace(/VEVO$/i, '').trim();
+  return { title: parts.length ? parts.join(' - ') : title, artist };
+}
+
 function onYtState() {
+  clearTimeout(ytMetadataTimer);
+  if (media.kind !== 'yt') return;
   if (yt && yt.getDuration) checkDuration();
   if (!yt || !yt.getVideoData || ytSearched === ytVideoId) return;
   const data = yt.getVideoData() || {};
   const dur = yt.getDuration ? yt.getDuration() : 0;
-  if (!data.title) return; // metadata not in yet; we'll be called again on the next state change
+  // YouTube may provide a title before the artist or duration. Searching then
+  // can select an unrelated version and prevent the word-timing lookup.
+  if (!data.title || !data.author || !(dur > 0) || (data.video_id && data.video_id !== ytVideoId)) {
+    if (ytMetadataAttempts++ < 40) ytMetadataTimer = setTimeout(onYtState, 250);
+    $('#searchStatus').textContent = 'Waiting for YouTube song details. Start the video, or search for the song below.';
+    return;
+  }
   ytSearched = ytVideoId;
   media.name = `YouTube · ${data.title}`;
   $('#sourceName').textContent = media.name;
-  let q = cleanTitle(data.title);
-  const author = (data.author || '').replace(/\s*-\s*Topic$/i, '').replace(/VEVO$/i, '').trim();
-  if (!/\s[-–—]\s/.test(data.title) && author && !q.toLowerCase().includes(author.toLowerCase())) q = `${author} ${q}`;
-  autoFind(q.replace(/\s[-–—]\s/, ' '), dur);
+  const identity = youtubeIdentity(data);
+  autoFind([identity.artist, identity.title].filter(Boolean).join(' '), dur, identity);
 }
 
 function applyYtMode() {
@@ -398,7 +414,10 @@ async function autoFind(q, duration, tags) {
   const best = scored[0];
   const diff = duration ? Math.abs(best.r.duration - duration) : 0;
   if (!duration || diff <= 8) {
-    loadTrack(best.r);
+    const identity = tags && tags.title && tags.artist
+      ? { trackName: tags.title, artistName: tags.artist, duration: duration || best.r.duration }
+      : null;
+    loadTrack(best.r, identity);
     status.textContent = `Auto-matched “${best.r.trackName}”. Wrong one? Pick another below.`;
   } else {
     status.textContent = 'No result matched your audio’s length closely. Pick the best one below.';
@@ -413,7 +432,7 @@ const viewport = $('#viewport');
 const countdown = $('#countdown');
 let wordTimingCtl = null;
 
-function loadTrack(r) {
+function loadTrack(r, identity = null) {
   if (wordTimingCtl) wordTimingCtl.abort();
   wordTimingCtl = null;
   state.track = r;
@@ -435,42 +454,55 @@ function loadTrack(r) {
   if (vocals.length && vocals.every((L) => L.wordSync)) {
     setTimingStatus('Word timing from LRCLIB');
   } else {
-    setTimingStatus((state.lines.length ? 'Estimated word timing' : 'No timed lyrics') + ' · checking BiniLyrics…');
-    const ctl = wordTimingCtl = new AbortController();
-    upgradeWordTiming(r, ctl);
+    startWordTiming(r, identity ? { ...r, ...identity } : r);
   }
 }
 
-function setTimingStatus(message, link = false) {
+function setTimingStatus(message, source = '', retry = null) {
   const status = $('#timingStatus');
   status.hidden = false;
   status.textContent = message;
-  if (link) {
-    const a = el('a', '', 'BiniLyrics');
-    a.href = 'https://lyrics.binimum.org/';
+  if (source) {
+    const a = el('a', '', source);
+    a.href = source === 'lrc.red' ? 'https://lrc.red/' : 'https://lyrics.binimum.org/';
     a.target = '_blank';
     a.rel = 'noopener';
     status.append(a);
   }
+  if (retry) {
+    const button = el('button', 'timing-retry', 'Retry word timing');
+    button.type = 'button';
+    button.addEventListener('click', retry);
+    status.append(document.createTextNode(' · '), button);
+  }
 }
 
-async function upgradeWordTiming(track, ctl) {
-  const timeout = setTimeout(() => ctl.abort(), 15000);
+function startWordTiming(track, identity) {
+  if (state.track !== track) return;
+  if (wordTimingCtl) wordTimingCtl.abort();
+  const ctl = wordTimingCtl = new AbortController();
+  setTimingStatus((state.lines.length ? 'Estimated word timing' : 'No timed lyrics') + ' · checking word timing…');
+  upgradeWordTiming(track, ctl, identity);
+}
+
+async function upgradeWordTiming(track, ctl, identity) {
+  const timeout = setTimeout(() => ctl.abort(), 22000);
   const fallback = () => state.lines.length ? 'Estimated word timing' : 'No timed lyrics';
+  const retry = () => startWordTiming(track, identity);
   try {
-    const result = await WordTiming.lookup(track, { signal: ctl.signal });
+    const result = await WordTiming.lookup(identity, { signal: ctl.signal });
     if (wordTimingCtl !== ctl || state.track !== track) return;
     if (!result) {
-      setTimingStatus(fallback() + ' · word timings unavailable for this version');
+      setTimingStatus(fallback() + ' · word timings unavailable for this version', '', retry);
       return;
     }
     state.lines = result.lines;
     state.active = state.focus = -2;
     $('#plain').hidden = true;
     renderLines();
-    setTimingStatus('Word timing from ', true);
+    setTimingStatus('Word timing from ', result.source);
   } catch {
-    if (wordTimingCtl === ctl && state.track === track) setTimingStatus(fallback() + ' · BiniLyrics unavailable');
+    if (wordTimingCtl === ctl && state.track === track) setTimingStatus(fallback() + ' · word timing service unavailable', '', retry);
   } finally {
     clearTimeout(timeout);
   }
@@ -481,7 +513,13 @@ function renderLines() {
   state.lines.forEach((L, i) => {
     const d = el('div', 'line' + (L.gap ? ' gap' : ''));
     L.el = d;
-    L.wordEls = L.words.map((w) => { const s = el('span', 'w', w.text); d.append(s); return s; });
+    L.wordEls = L.words.map((w) => {
+      // Spaces separate the glyphs but must not consume their highlight time.
+      const [, before, text, after] = w.text.match(/^(\s*)([\s\S]*?)(\s*)$/);
+      const s = el('span', 'w', text);
+      d.append(document.createTextNode(before), s, document.createTextNode(after));
+      return s;
+    });
     L.lastP = null;
     d.addEventListener('click', () => {
       media.seek(L.start - state.offset - 0.6);

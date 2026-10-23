@@ -202,6 +202,7 @@ input[type=text]:focus, input[type=search]:focus { border-color: var(--blue-2); 
 .track-artist { color: var(--blue-soft); margin-top: 4px; font-weight: 500; }
 .timing-source { color: var(--blue-soft); font-size: .8rem; margin-top: 6px; font-weight: 400; }
 .timing-source a { color: inherit; }
+.timing-retry { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
 .warn {
   max-width: 340px; font-size: .82rem; line-height: 1.35; padding: 8px 12px; border-radius: 10px;
   background: rgba(255,122,26,.14); border: 1px solid rgba(255,122,26,.5); color: var(--orange-soft);

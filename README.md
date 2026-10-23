@@ -2,7 +2,7 @@
 
 Live sing-along lyrics synced to whatever song you're playing. Lines light up orange word by word as you sing.
 
-Lyrics are found through [LRCLIB](https://lrclib.net). When available for the matching recording, real word and syllable timestamps come from [BiniLyrics](https://lyrics.binimum.org/). Both are fetched in the browser without an API key or backend.
+Lyrics are found through [LRCLIB](https://lrclib.net). When available for the matching recording, real word and syllable timestamps come from [BiniLyrics](https://lyrics.binimum.org/), with [lrc.red](https://lrc.red/) as a direct fallback. Sources are fetched in the browser without an API key or backend.
 
 ## Audio sources
 
@@ -14,7 +14,7 @@ Lyrics are found through [LRCLIB](https://lrclib.net). When available for the ma
 
 - Word-by-word highlight (real word timings when the song has them, estimated otherwise)
 - Held notes at any position follow the supplied word/syllable timestamps. Adjacent syllables keep their original spacing, so “newborn” stays one word.
-- A label on stage shows whether word timing comes from BiniLyrics/LRCLIB or is estimated. Missing word timings, a different recording length, or an unavailable provider leave the LRCLIB fallback in place.
+- A label on stage identifies the timing source or says when timing is estimated. Missing word timings, a different recording length, or unavailable providers leave the LRCLIB fallback in place. Use “Retry word timing” to recover from a temporary failure.
 - Countdown dots before a line that follows an instrumental break
 - Click any line to jump to it
 - Tap sync and ±0.1s nudges, remembered per song

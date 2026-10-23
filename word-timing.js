@@ -1,4 +1,4 @@
-/* Native word/syllable timings from BiniLyrics. No timings are inferred here. */
+/* Native word/syllable timings from BiniLyrics/lrc.red. No timings are inferred here. */
 'use strict';
 
 const WordTiming = (() => {
@@ -6,6 +6,22 @@ const WordTiming = (() => {
   const TTM = 'http://www.w3.org/ns/ttml#metadata';
   const cache = new Map();
   const normalize = (s) => String(s || '').normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+
+  async function request(url, signal, format = 'json') {
+    if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    const ctl = new AbortController();
+    const abort = () => ctl.abort();
+    if (signal) signal.addEventListener('abort', abort, { once: true });
+    const timeout = setTimeout(abort, 6000);
+    try {
+      const response = await fetch(url, { signal: ctl.signal });
+      if (!response.ok) throw new Error(`Word timing service returned ${response.status}`);
+      return await response[format]();
+    } finally {
+      clearTimeout(timeout);
+      if (signal) signal.removeEventListener('abort', abort);
+    }
+  }
 
   function time(value) {
     if (value == null || !value.trim()) return null;
@@ -89,25 +105,48 @@ const WordTiming = (() => {
     if (cache.has(key)) return cache.get(key);
     const params = new URLSearchParams({ track: track.trackName, artist: track.artistName });
     if (track.duration > 0) params.set('duration', String(Math.round(track.duration)));
-    const response = await fetch(`${API}?${params}`, { signal });
-    if (!response.ok) throw new Error(`BiniLyrics returned ${response.status}`);
-    const data = await response.json();
-    const candidates = matchingCandidates(track, Array.isArray(data.results) ? data.results : []);
-    for (const record of candidates.slice(0, 3)) {
+    let lastError = null;
+    for (const source of ['BiniLyrics', 'lrc.red']) {
       try {
-        const file = await fetch(record.lyricsUrl, { signal });
-        if (!file.ok) continue;
-        const src = await file.text();
-        if (src.length > 2 * 1024 * 1024) continue;
-        const lines = parseTTML(src);
-        if (!lines.length || (record.duration > 0 && lines[lines.length - 1].end > Number(record.duration) + 2)) continue;
-        const result = { lines, record, source: 'BiniLyrics' };
-        cache.set(key, result);
-        return result;
+        let records;
+        if (source === 'BiniLyrics') {
+          const data = await request(`${API}?${params}`, signal);
+          records = Array.isArray(data.results) ? data.results : [];
+        } else {
+          const data = await request(`https://lrc.red/match.json?${params}`, signal);
+          records = (Array.isArray(data.hits) ? data.hits : [])
+            .filter((r) => /^[A-Z]{2}[A-Z0-9]{3}\d{7}$/i.test(r.isrc || ''))
+            .map((r) => ({ track_name: r.title, artist_name: r.artist, album_name: r.album, duration: r.duration,
+              timing_type: 'word', lyricsUrl: `https://lrc.red/s/${r.isrc}.song.json` }));
+        }
+        for (const record of matchingCandidates(track, records).slice(0, 3)) {
+          try {
+            let src;
+            if (source === 'lrc.red') {
+              const song = await request(record.lyricsUrl, signal);
+              if (song.byModel === true || song.lyrics?.sync !== 'word') continue;
+              // Validate the file's identity too, rather than only the search hit.
+              const identity = { ...record, track_name: song.title, artist_name: song.artist, duration: song.duration };
+              if (!matchingCandidates(track, [identity]).length) continue;
+              src = song.source;
+            } else src = await request(record.lyricsUrl, signal, 'text');
+            if (typeof src !== 'string' || src.length > 2 * 1024 * 1024) continue;
+            const lines = parseTTML(src);
+            if (!lines.length || (record.duration > 0 && lines[lines.length - 1].end > Number(record.duration) + 2)) continue;
+            const result = { lines, record, source };
+            cache.set(key, result);
+            return result;
+          } catch (e) {
+            if (signal && signal.aborted) throw e;
+            lastError = e;
+          }
+        }
       } catch (e) {
         if (signal && signal.aborted) throw e;
+        lastError = e;
       }
     }
+    if (lastError) throw lastError;
     return null;
   }
 
