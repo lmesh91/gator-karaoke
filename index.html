@@ -112,6 +112,7 @@
         <div class="track">
           <div class="track-title" id="trackTitle">Pick a song</div>
           <div class="track-artist" id="trackArtist">Search on the left, or drop an audio file to auto-match</div>
+          <div class="timing-source" id="timingStatus" aria-live="polite" hidden></div>
         </div>
         <div class="warn" id="warn" hidden></div>
       </div>
@@ -158,6 +159,7 @@
   </main>
 
   <audio id="audio" preload="auto"></audio>
+  <script src="word-timing.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

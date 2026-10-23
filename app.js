@@ -411,8 +411,11 @@ async function autoFind(q, duration, tags) {
 const lyricsEl = $('#lyrics');
 const viewport = $('#viewport');
 const countdown = $('#countdown');
+let wordTimingCtl = null;
 
 function loadTrack(r) {
+  if (wordTimingCtl) wordTimingCtl.abort();
+  wordTimingCtl = null;
   state.track = r;
   state.offset = store.get(`gkc.off.${r.id}`, 0);
   state.lines = r.syncedLyrics ? parseLRC(r.syncedLyrics) : [];
@@ -428,6 +431,49 @@ function loadTrack(r) {
   renderResults();
   checkDuration();
   document.title = `${r.trackName} · Gator Karaoke Club`;
+  const vocals = state.lines.filter((L) => !L.gap);
+  if (vocals.length && vocals.every((L) => L.wordSync)) {
+    setTimingStatus('Word timing from LRCLIB');
+  } else {
+    setTimingStatus((state.lines.length ? 'Estimated word timing' : 'No timed lyrics') + ' · checking BiniLyrics…');
+    const ctl = wordTimingCtl = new AbortController();
+    upgradeWordTiming(r, ctl);
+  }
+}
+
+function setTimingStatus(message, link = false) {
+  const status = $('#timingStatus');
+  status.hidden = false;
+  status.textContent = message;
+  if (link) {
+    const a = el('a', '', 'BiniLyrics');
+    a.href = 'https://lyrics.binimum.org/';
+    a.target = '_blank';
+    a.rel = 'noopener';
+    status.append(a);
+  }
+}
+
+async function upgradeWordTiming(track, ctl) {
+  const timeout = setTimeout(() => ctl.abort(), 15000);
+  const fallback = () => state.lines.length ? 'Estimated word timing' : 'No timed lyrics';
+  try {
+    const result = await WordTiming.lookup(track, { signal: ctl.signal });
+    if (wordTimingCtl !== ctl || state.track !== track) return;
+    if (!result) {
+      setTimingStatus(fallback() + ' · word timings unavailable for this version');
+      return;
+    }
+    state.lines = result.lines;
+    state.active = state.focus = -2;
+    $('#plain').hidden = true;
+    renderLines();
+    setTimingStatus('Word timing from ', true);
+  } catch {
+    if (wordTimingCtl === ctl && state.track === track) setTimingStatus(fallback() + ' · BiniLyrics unavailable');
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function renderLines() {

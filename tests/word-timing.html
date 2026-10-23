@@ -1,0 +1,83 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Word timing regression checks</title>
+<script src="../word-timing.js"></script>
+<pre id="results"></pre>
+<script>
+// The requested lyric excerpt and its supplied timestamps. No network needed.
+const excerpt = `<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata"><body><div>
+  <p begin="58.414" end="1:04.222"><span begin="58.414" end="1:00.638">I</span> <span begin="1:00.638" end="1:01.390">feel</span> <span begin="1:01.390" end="1:01.774">like</span> <span begin="1:01.774" end="1:02.041">a</span> <span begin="1:02.041" end="1:02.699">new</span><span begin="1:02.699" end="1:04.222">born</span></p>
+</div></body></tt>`;
+const wrap = (content) => `<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata"><body>${content}</body></tt>`;
+const tests = [];
+function test(name, fn) {
+  try { fn(); tests.push({ name, passed: true }); }
+  catch (error) { tests.push({ name, passed: false, error: error.message }); }
+}
+function equal(actual, expected) {
+  if (actual !== expected) throw Error(`${JSON.stringify(actual)} != ${JSON.stringify(expected)}`);
+}
+function near(actual, expected) {
+  if (Math.abs(actual - expected) > 1e-8) throw Error(`${actual} != ${expected}`);
+}
+test('a held first syllable retains its native 2.224-second duration', () => {
+  const [line] = WordTiming.parseTTML(excerpt);
+  near(line.words[0].end - line.words[0].start, 2.224);
+  near(line.words[1].start, 60.638);
+  equal(line.wordSync, true);
+});
+test('syllable boundaries do not insert spaces inside newborn', () => {
+  const [line] = WordTiming.parseTTML(excerpt);
+  equal(line.text, 'I feel like a newborn');
+  equal(line.words[4].text + line.words[5].text, 'newborn');
+});
+test('word ends are preserved instead of extended to the next word', () => {
+  const [line] = WordTiming.parseTTML(wrap('<p begin="10" end="20"><span begin="10" end="12">Hold</span> <span begin="16" end="18">go</span></p>'));
+  near(line.words[0].end, 12);
+  near(line.words[1].start, 16);
+  near(line.end, 20);
+});
+test('a middle syllable can have the longest duration', () => {
+  const [line] = WordTiming.parseTTML(wrap('<p><span begin="10" end="11">One</span> <span begin="11" end="17">two</span> <span begin="17" end="18">three</span></p>'));
+  near(line.words[1].end - line.words[1].start, 6);
+  near(line.words[2].end - line.words[2].start, 1);
+});
+test('a final syllable can have the longest duration', () => {
+  const [line] = WordTiming.parseTTML(wrap('<p><span begin="10" end="11">One</span> <span begin="11" end="18">two</span></p>'));
+  near(line.words[1].end - line.words[1].start, 7);
+});
+test('clock, second, and millisecond timestamps share the same units', () => {
+  const [line] = WordTiming.parseTTML(wrap('<div begin="01:00:00.000" end="01:00:05.000"><p><span begin="3600000ms" end="3601s">One</span> <span begin="01:00:02" end="01:00:04.500">two</span></p></div>'));
+  near(line.start, 3600);
+  near(line.words[0].end, 3601);
+  near(line.words[1].end, 3604.5);
+  near(line.end, 3604.5);
+});
+test('a shared verse container does not collapse lines onto one timestamp', () => {
+  const lines = WordTiming.parseTTML(wrap('<div begin="1" end="20"><p><span begin="2" end="3">One</span></p><p><span begin="10" end="12">Two</span></p></div>'));
+  near(lines[0].start, 2);
+  near(lines[0].end, 3);
+  near(lines[1].start, 10);
+  near(lines[1].end, 12);
+});
+test('translations, romanization, and background vocals stay out of the lead text', () => {
+  const [line] = WordTiming.parseTTML(wrap('<p><span begin="1" end="2">Lead</span><span ttm:role="x-translation">Translation</span><span ttm:role="x-roman">Roman</span><span ttm:role="x-bg" begin="1" end="3"><span begin="1" end="3">Backing</span></span></p>'));
+  equal(line.text, 'Lead');
+  equal(line.words.length, 1);
+});
+test('invalid or backwards timestamps are rejected', () => {
+  for (const [start, end] of [['bad', '3'], ['4', '3'], ['3', '3'], ['1:99', '200']]) {
+    equal(WordTiming.parseTTML(wrap(`<p><span begin="${start}" end="${end}">One</span></p>`)).length, 0);
+  }
+});
+test('mixed files are rejected instead of dropping untimed vocal lines', () => {
+  equal(WordTiming.parseTTML(wrap('<p><span begin="1" end="2">One</span></p><p begin="3" end="4">Untimed words</p>')).length, 0);
+});
+test('broken XML and line-only files do not qualify as word timing', () => {
+  equal(WordTiming.parseTTML('<tt><broken></tt>').length, 0);
+  equal(WordTiming.parseTTML(wrap('<p begin="1" end="5">One two</p>')).length, 0);
+});
+window.wordTimingResults = tests;
+document.querySelector('#results').textContent = tests.map((t) => `${t.passed ? 'PASS' : 'FAIL'} ${t.name}${t.error ? ': ' + t.error : ''}`).join('\n');
+document.body.dataset.failures = String(tests.filter((t) => !t.passed).length);
+</script>

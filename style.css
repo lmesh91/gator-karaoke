@@ -200,6 +200,8 @@ input[type=text]:focus, input[type=search]:focus { border-color: var(--blue-2); 
 .stage-head { position: relative; z-index: 2; display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; padding: 20px 24px 0; }
 .track-title { font-family: Bungee, Rubik, sans-serif; font-size: clamp(1.1rem, 2.2vw, 1.6rem); color: var(--orange); line-height: 1.15; }
 .track-artist { color: var(--blue-soft); margin-top: 4px; font-weight: 500; }
+.timing-source { color: var(--blue-soft); font-size: .8rem; margin-top: 6px; font-weight: 400; }
+.timing-source a { color: inherit; }
 .warn {
   max-width: 340px; font-size: .82rem; line-height: 1.35; padding: 8px 12px; border-radius: 10px;
   background: rgba(255,122,26,.14); border: 1px solid rgba(255,122,26,.5); color: var(--orange-soft);
