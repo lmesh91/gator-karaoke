@@ -5,10 +5,19 @@ const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { mkdtempSync, rmSync } = require('node:fs');
 const { tmpdir } = require('node:os');
-const { matchingCandidates, lookup } = require('../word-timing.js');
+const { recordingIdentity, matchingCandidates, lookup } = require('../word-timing.js');
 
 const track = { trackName: 'Take a Picture', artistName: 'Filter', albumName: 'Title of Record', duration: 364 };
 const candidate = { track_name: 'Take A Picture', artist_name: 'Filter', album_name: 'Title of Record', duration: 364, timing_type: 'word', lyricsUrl: 'https://lrc.red/s/example.ttml' };
+
+test('duplicated LRCLIB fields and official channel suffixes do not prevent a recording match', () => {
+  for (const artistName of ['Filter - Take A Picture', 'Filter - Topic', 'FilterVEVO']) {
+    assert.equal(recordingIdentity({ ...track, artistName }).artistName, 'Filter');
+  }
+  assert.equal(recordingIdentity({ ...track, trackName: 'Filter - Take A Picture' }).trackName, 'Take A Picture');
+  assert.equal(recordingIdentity({ ...track, artistName: 'A band - with a dash' }).artistName, 'A band - with a dash');
+  assert.equal(recordingIdentity({ ...track, trackName: 'Take A Picture (Live)' }).trackName, 'Take A Picture (Live)');
+});
 
 test('matching prefers the same recording and permits case/punctuation differences', () => {
   const otherAlbum = { ...candidate, album_name: 'Collection' };

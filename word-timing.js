@@ -7,6 +7,18 @@ const WordTiming = (() => {
   const cache = new Map();
   const normalize = (s) => String(s || '').normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 
+  function recordingIdentity(track) {
+    let artist = String(track.artistName || '').trim().replace(/\s*-\s*Topic$/i, '').replace(/VEVO$/i, '').trim();
+    let title = String(track.trackName || '').trim();
+    // Some LRCLIB submissions put "Artist - Song" in the artist field, or
+    // repeat the artist in the title. Remove only an exact duplicated field.
+    const artistParts = artist.split(/\s[-–—]\s/);
+    if (artistParts.length > 1 && normalize(artistParts.slice(1).join(' - ')) === normalize(title)) artist = artistParts[0];
+    const titleParts = title.split(/\s[-–—]\s/);
+    if (titleParts.length > 1 && normalize(titleParts[0]) === normalize(artist)) title = titleParts.slice(1).join(' - ');
+    return { ...track, trackName: title, artistName: artist };
+  }
+
   async function request(url, signal, format = 'json') {
     if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
     const ctl = new AbortController();
@@ -101,6 +113,7 @@ const WordTiming = (() => {
   }
 
   async function lookup(track, { signal } = {}) {
+    track = recordingIdentity(track);
     const key = JSON.stringify([track.trackName, track.artistName, track.albumName, track.duration]);
     if (cache.has(key)) return cache.get(key);
     const params = new URLSearchParams({ track: track.trackName, artist: track.artistName });
@@ -150,7 +163,7 @@ const WordTiming = (() => {
     return null;
   }
 
-  return { matchingCandidates, parseTTML, lookup };
+  return { recordingIdentity, matchingCandidates, parseTTML, lookup };
 })();
 
 if (typeof module !== 'undefined') module.exports = WordTiming;

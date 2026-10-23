@@ -250,11 +250,13 @@ function loadYTApi() {
 
 let ytSearched = null;
 let ytMetadataTimer = null, ytMetadataAttempts = 0;
+let ytLookup = null;
 async function loadYouTube(id, { searchLyrics = true } = {}) {
   clearTimeout(ytMetadataTimer);
   ytMetadataAttempts = 0;
   ytVideoId = id;
   ytSearched = searchLyrics ? null : id;
+  ytLookup = null;
   media.use('yt', 'YouTube');
   selectTab('yt');
   applyYtMode();
@@ -283,7 +285,10 @@ async function loadYouTube(id, { searchLyrics = true } = {}) {
 function youtubeIdentity(data) {
   const title = cleanTitle(data.title);
   const parts = title.split(/\s[-–—]\s/);
-  const artist = parts.length > 1 ? parts.shift() : (data.author || '').replace(/\s*-\s*Topic$/i, '').replace(/VEVO$/i, '').trim();
+  // An ordinary uploader/channel name is not necessarily the recording artist.
+  const channel = data.author || '';
+  const artist = parts.length > 1 ? parts.shift()
+    : /\s*-\s*Topic$|VEVO$/i.test(channel) ? channel.replace(/\s*-\s*Topic$/i, '').replace(/VEVO$/i, '').trim() : '';
   return { title: parts.length ? parts.join(' - ') : title, artist };
 }
 
@@ -291,21 +296,43 @@ function onYtState() {
   clearTimeout(ytMetadataTimer);
   if (media.kind !== 'yt') return;
   if (yt && yt.getDuration) checkDuration();
-  if (!yt || !yt.getVideoData || ytSearched === ytVideoId) return;
+  if (!yt || !yt.getVideoData) return;
   const data = yt.getVideoData() || {};
   const dur = yt.getDuration ? yt.getDuration() : 0;
-  // YouTube may provide a title before the artist or duration. Searching then
-  // can select an unrelated version and prevent the word-timing lookup.
-  if (!data.title || !data.author || !(dur > 0) || (data.video_id && data.video_id !== ytVideoId)) {
+  if (!data.title || (data.video_id && data.video_id !== ytVideoId)) {
     if (ytMetadataAttempts++ < 40) ytMetadataTimer = setTimeout(onYtState, 250);
-    $('#searchStatus').textContent = 'Waiting for YouTube song details. Start the video, or search for the song below.';
     return;
   }
-  ytSearched = ytVideoId;
   media.name = `YouTube · ${data.title}`;
   $('#sourceName').textContent = media.name;
   const identity = youtubeIdentity(data);
-  autoFind([identity.artist, identity.title].filter(Boolean).join(' '), dur, identity);
+  if (ytSearched !== ytVideoId) {
+    ytSearched = ytVideoId;
+    const lookup = ytLookup = { id: ytVideoId, identity, track: null, timingArtist: identity.artist };
+    // Render the original LRCLIB lyrics as soon as a title is available. Neither
+    // video duration nor the extra word-timing request may gate this search.
+    autoFind([identity.artist, identity.title].filter(Boolean).join(' '), dur, identity,
+      () => media.kind === 'yt' && ytLookup === lookup && ytVideoId === lookup.id)
+      .then((track) => {
+        lookup.track = track;
+        refineYouTubeTiming(lookup);
+      });
+  } else if (ytLookup) {
+    ytLookup.identity = identity;
+    refineYouTubeTiming(ytLookup);
+  }
+  if (!identity.artist && ytMetadataAttempts++ < 40) ytMetadataTimer = setTimeout(onYtState, 250);
+}
+
+function refineYouTubeTiming(lookup) {
+  if (ytLookup !== lookup || media.kind !== 'yt' || lookup.id !== ytVideoId
+    || !lookup.track || state.track !== lookup.track || !lookup.identity.artist
+    || lookup.timingArtist === lookup.identity.artist) return;
+  lookup.timingArtist = lookup.identity.artist;
+  if (state.lines.some((L) => L.wordSync)) return;
+  // Late artist metadata can repair an ambiguous title-only match without
+  // loading the song again, resetting sync, or moving playback.
+  startWordTiming(lookup.track, { ...lookup.track, trackName: lookup.identity.title, artistName: lookup.identity.artist });
 }
 
 function applyYtMode() {
@@ -330,6 +357,7 @@ function cleanTitle(t) {
    ====================================================================== */
 const state = { track: null, lines: [], offset: 0, results: [], focus: -2, active: -2 };
 let searchCtl = null;
+let trackVersion = 0;
 
 async function search(q) {
   if (searchCtl) searchCtl.abort();
@@ -399,10 +427,14 @@ function el(tag, cls, text) {
 }
 
 // Search, then auto-load the synced result whose length best matches the audio.
-async function autoFind(q, duration, tags) {
+async function autoFind(q, duration, tags, isCurrent = () => true) {
+  const version = trackVersion;
+  const current = () => isCurrent() && trackVersion === version;
   $('#q').value = q;
   let list = await runSearch(q, { quiet: true });
+  if (!current()) return;
   if (!list.length && tags && tags.title) { $('#q').value = tags.title; list = await runSearch(tags.title, { quiet: true }); }
+  if (!current()) return;
   const synced = list.filter((r) => r.syncedLyrics && !r.instrumental);
   const status = $('#searchStatus');
   if (!synced.length) {
@@ -415,10 +447,11 @@ async function autoFind(q, duration, tags) {
   const diff = duration ? Math.abs(best.r.duration - duration) : 0;
   if (!duration || diff <= 8) {
     const identity = tags && tags.title && tags.artist
-      ? { trackName: tags.title, artistName: tags.artist, duration: duration || best.r.duration }
+      ? { trackName: tags.title, artistName: tags.artist }
       : null;
     loadTrack(best.r, identity);
     status.textContent = `Auto-matched “${best.r.trackName}”. Wrong one? Pick another below.`;
+    return best.r;
   } else {
     status.textContent = 'No result matched your audio’s length closely. Pick the best one below.';
   }
@@ -433,6 +466,7 @@ const countdown = $('#countdown');
 let wordTimingCtl = null;
 
 function loadTrack(r, identity = null) {
+  trackVersion++;
   if (wordTimingCtl) wordTimingCtl.abort();
   wordTimingCtl = null;
   state.track = r;
@@ -481,7 +515,7 @@ function startWordTiming(track, identity) {
   if (state.track !== track) return;
   if (wordTimingCtl) wordTimingCtl.abort();
   const ctl = wordTimingCtl = new AbortController();
-  setTimingStatus((state.lines.length ? 'Estimated word timing' : 'No timed lyrics') + ' · checking word timing…');
+  setTimingStatus(state.lines.length ? 'Estimated word timing' : 'No timed lyrics');
   upgradeWordTiming(track, ctl, identity);
 }
 

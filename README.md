@@ -7,7 +7,7 @@ Lyrics are found through [LRCLIB](https://lrclib.net). When available for the ma
 ## Audio sources
 
 - **Audio file**: drop in an MP3 / M4A / FLAC / WAV. The title and artist are read from its ID3 tags (or the file name), and the synced lyrics whose length best matches the audio are loaded automatically.
-- **YouTube**: paste a link. Lyrics are found from the video title. The video can play behind the lyrics, in a corner, or hidden.
+- **YouTube**: paste a link. Lyrics are found as soon as the video title is available, without waiting for playback, duration, or word timing. The video can play behind the lyrics, in a corner, or hidden.
 - **Other device**: playing from Spotify or a speaker? Press <kbd>Space</kbd> as you hit play there, then <kbd>T</kbd> the moment the next line starts to lock the sync.
 
 ## Features
@@ -15,6 +15,7 @@ Lyrics are found through [LRCLIB](https://lrclib.net). When available for the ma
 - Word-by-word highlight (real word timings when the song has them, estimated otherwise)
 - Held notes at any position follow the supplied word/syllable timestamps. Adjacent syllables keep their original spacing, so “newborn” stays one word.
 - A label on stage identifies the timing source or says when timing is estimated. Missing word timings, a different recording length, or unavailable providers leave the LRCLIB fallback in place. Use “Retry word timing” to recover from a temporary failure.
+- Word timing loads in the background. Late YouTube artist details can refine that lookup without reloading the song or resetting playback and sync. Channel names from ordinary uploads are not treated as recording artists.
 - Countdown dots before a line that follows an instrumental break
 - Click any line to jump to it
 - Tap sync and ±0.1s nudges, remembered per song
