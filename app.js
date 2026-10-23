@@ -864,8 +864,9 @@ function checkDuration() {
 /* ======================================================================
    Video & backing track — found automatically for the chosen lyrics
    ====================================================================== */
-const mediaState = { track: null, videos: [], instrumentals: [], video: null, inst: null, ctl: null, failed: new Set(), searching: false, error: '', showAll: false };
-let instPref = store.get('gkc.instrumental', false);
+const mediaState = { track: null, videos: [], instrumentals: [], video: null, inst: null, ctl: null, failed: new Set(), searching: false, error: '', showAll: false, showAllInst: false };
+// On by default: this is a karaoke night, so sing over the backing track unless someone turns it off.
+let instPref = store.get('gkc.backing', true);
 
 function setMediaStatus(msg, err = false) {
   const status = $('#mediaStatus');
@@ -878,7 +879,7 @@ async function findMediaFor(track, { place = true, prefer = null } = {}) {
   if (mediaState.ctl) mediaState.ctl.abort();
   const ctl = new AbortController();
   stopInstrumental();
-  Object.assign(mediaState, { track, videos: [], instrumentals: [], video: null, inst: null, ctl, failed: new Set(), searching: true, showAll: false });
+  Object.assign(mediaState, { track, videos: [], instrumentals: [], video: null, inst: null, ctl, failed: new Set(), searching: true, showAll: false, showAllInst: false });
   setMediaStatus('Finding the video and backing track…');
   renderMedia();
   let found;
@@ -1022,7 +1023,17 @@ function renderMedia() {
   $('#instCount').textContent = mediaState.searching ? '' : instrumentals.length ? `${instrumentals.length} found` : mediaState.track ? 'none found' : '';
   const list = $('#instList');
   list.hidden = !instOn || !instrumentals.length;
-  list.replaceChildren(...instrumentals.map((v) => mediaItem(v, mediaState.inst === v, () => chooseInstrumental(v))));
+  const instShown = mediaState.showAllInst ? instrumentals : instrumentals.filter((v) => v === mediaState.inst);
+  const instItems = instShown.map((v) => mediaItem(v, mediaState.inst === v, () => chooseInstrumental(v)));
+  if (instrumentals.length > instShown.length) {
+    const li = document.createElement('li');
+    const more = el('button', 'media-more', `Show ${instrumentals.length - instShown.length} other instrumental${instrumentals.length - instShown.length > 1 ? 's' : ''}`);
+    more.type = 'button';
+    more.addEventListener('click', () => { mediaState.showAllInst = true; renderMedia(); });
+    li.append(more);
+    instItems.push(li);
+  }
+  list.replaceChildren(...instItems);
 }
 
 /* ---------- sync offsets, remembered per song and per audio source ---------- */
@@ -1120,7 +1131,7 @@ $('#ytForm').addEventListener('submit', (e) => {
 });
 $('#instToggle').addEventListener('change', (e) => {
   instPref = e.target.checked;
-  store.set('gkc.instrumental', instPref);
+  store.set('gkc.backing', instPref);
   setInstrumental(instPref);
 });
 $$('#ytMode button').forEach((b) => b.addEventListener('click', () => { ytMode = b.dataset.mode; store.set('gkc.ytMode', ytMode); applyYtMode(); }));

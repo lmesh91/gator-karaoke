@@ -189,8 +189,8 @@ input[type=text]:focus, input[type=search]:focus { border-color: var(--blue-2); 
 .media-more { border: 0; background: none; color: var(--blue-soft); font: inherit; font-size: .82rem; cursor: pointer; padding: 4px 2px; text-decoration: underline; }
 
 .inst-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; }
-.switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 700; font-size: .92rem; }
-.switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.switch { position: relative; display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 700; font-size: .92rem; }
+.switch input { position: absolute; left: 0; top: 50%; opacity: 0; width: 1px; height: 1px; margin: 0; }
 .switch-track {
   position: relative; width: 42px; height: 24px; flex: none; border-radius: 12px;
   background: var(--panel-2); border: 1px solid var(--line); transition: background .15s;

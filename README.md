@@ -15,7 +15,7 @@ Everything runs in the browser from free services, with no API key or backend:
 
 1. **Find the song.** Search by title, artist, or both. Every word-by-word result is listed above every line-by-line result, even when a line-by-line one is a closer text match. The Find card also says which timing is on stage.
 2. **Video & backing track.** Picking a result finds its video automatically and cues the one whose length best matches the recording the lyrics were timed against, preferring the official music video when it lines up. Other matches are listed with how much longer or shorter they are. Videos that can't be embedded are skipped automatically.
-3. **Instrumental.** Flip the switch to sing over a backing track found for the same song. It drives the lyrics, while the music video keeps playing muted behind them and follows along. The switch setting carries over to the next song.
+3. **Instrumental.** On by default: when a backing track is found for the same song, you sing over it. It drives the lyrics, while the music video keeps playing muted behind them and follows along. Switch it off to hear the original vocals; the setting carries over to the next song.
 
 ### Using your own audio
 
