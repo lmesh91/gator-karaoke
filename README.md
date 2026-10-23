@@ -109,3 +109,5 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
 Open `tests/word-timing.html` through the same local server to run the TTML parsing regressions in your browser. These use a short timing fixture, not network requests. Word timing coverage varies by song and edition; a word-synced version with a different title, artist, or a duration more than five seconds away is not substituted automatically.
+
+The full Python suite also exercises native audio in an installed Firefox using a disposable profile and a generated tone (AAC/M4A when ffmpeg is installed). GitHub Pages runs the JavaScript checks and Python server unit checks; the real Firefox test stays in the local suite because the hosted runner blocks Firefox's namespace sandbox. The Python helper itself is not published to Pages.

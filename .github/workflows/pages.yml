@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
-      - name: Check JavaScript
+      - name: Check application and helper
         run: |
           node --check app.js
           node --check word-timing.js
@@ -32,7 +32,9 @@ jobs:
           node --check direct-audio.js
           node --check fullscreen-controls.js
           node --test tests/*.test.cjs
-          python3 -m unittest discover -s tests -p 'test_*.py'
+          # Real Firefox audio is a local-helper integration test. The hosted
+          # runner blocks its namespace sandbox, and Pages ships static files.
+          python3 -m unittest discover -s tests -p 'test_server.py'
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Prepare static site
