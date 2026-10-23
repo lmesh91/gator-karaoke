@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gator Karaoke Club</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Rubik:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐊</text></svg>">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <svg class="gator" viewBox="0 0 140 90" aria-hidden="true">
+        <!-- original mascot: a blue gator belting into an orange mic -->
+        <path class="g-body" d="M8 58 C10 36 26 24 44 22 C50 12 60 10 66 18 C84 20 108 24 128 30 C134 32 134 40 128 41 L58 46 C52 47 46 50 44 54 Z"/>
+        <path class="g-jaw" d="M44 56 C50 52 58 52 66 54 L120 66 C126 68 125 74 119 74 L60 72 C40 72 22 74 8 66 Z"/>
+        <path class="g-mouth" d="M46 51 L126 41 L118 66 L64 55 Z"/>
+        <path class="g-teeth" d="M62 47 l4 6 l4 -6.6 l4 6 l4 -6.8 l4 6 l4 -7 l4 6 l4 -7.2 l4 6 l4 -7.4 l4 6 l4 -7.6 Z"/>
+        <path class="g-teeth" d="M70 58 l4 -6 l4 6.8 l4 -6 l4 7 l4 -6 l4 7.2 l4 -6 l4 7.4 l4 -6 l4 7.4 Z"/>
+        <circle class="g-eye" cx="60" cy="22" r="8"/>
+        <circle class="g-pupil" cx="62" cy="22" r="3.6"/>
+        <path class="g-lid" d="M51 20 C54 11 66 11 69 19 Z"/>
+        <circle class="g-nostril" cx="124" cy="31" r="2"/>
+        <g class="g-mic" transform="rotate(-28 34 72)">
+          <rect x="30" y="62" width="9" height="26" rx="3"/>
+          <circle cx="34.5" cy="60" r="8.5" class="g-mic-head"/>
+        </g>
+        <path class="g-note" d="M118 6 v12 a4 4 0 1 1 -2 -3.4 v-6.6 l10 -2 v10 a4 4 0 1 1 -2 -3.4 v-4.6 z"/>
+      </svg>
+      <div>
+        <h1>Gator Karaoke Club</h1>
+        <p class="tag">Grab the mic. Show some teeth.</p>
+      </div>
+    </div>
+    <div class="now" id="nowWrap" hidden>
+      <span class="now-label">Now singing</span>
+      <span class="now-name" id="nowSinger"></span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="side">
+      <section class="card">
+        <h2><span class="step">1</span> Bring the audio</h2>
+        <div class="tabs" role="tablist">
+          <button role="tab" class="tab" data-tab="file" aria-selected="true">Audio file</button>
+          <button role="tab" class="tab" data-tab="yt" aria-selected="false">YouTube</button>
+          <button role="tab" class="tab" data-tab="clock" aria-selected="false">Other device</button>
+        </div>
+
+        <div class="tabpanel" data-panel="file">
+          <label class="drop" id="drop">
+            <input type="file" id="fileInput" accept="audio/*,video/mp4,.mp3,.m4a,.flac,.ogg,.wav,.opus,.aac">
+            <strong>Drop a song here</strong>
+            <span>or click to pick an MP3 / M4A / FLAC / WAV.<br>Lyrics are matched automatically from its tags or file name.</span>
+          </label>
+        </div>
+
+        <div class="tabpanel" data-panel="yt" hidden>
+          <form id="ytForm" class="row">
+            <input id="ytUrl" type="text" placeholder="Paste a YouTube link" autocomplete="off">
+            <button class="btn" type="submit">Load</button>
+          </form>
+          <p class="hint">The video's title is used to find lyrics. Some videos block embedding, so try the official audio upload if one won't play.</p>
+          <div class="row small">
+            <span class="muted">Video:</span>
+            <div class="seg" id="ytMode">
+              <button type="button" data-mode="bg" aria-pressed="true">Behind lyrics</button>
+              <button type="button" data-mode="mini" aria-pressed="false">Corner</button>
+              <button type="button" data-mode="off" aria-pressed="false">Hidden</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="tabpanel" data-panel="clock" hidden>
+          <p class="hint">Playing from Spotify, a speaker, or a phone? Pick a song below, then press <kbd>Space</kbd> as you hit play on the other device. Press <kbd>T</kbd> the instant the <em>next</em> line starts to lock the sync.</p>
+          <button class="btn wide" id="useClock" type="button">Use the stage clock</button>
+        </div>
+        <p class="source-line">Source: <span id="sourceName">Stage clock</span></p>
+      </section>
+
+      <section class="card">
+        <h2><span class="step">2</span> Find the lyrics</h2>
+        <form id="searchForm" class="row">
+          <input id="q" type="search" placeholder="Song, artist, or both" autocomplete="off">
+          <button class="btn" type="submit">Search</button>
+        </form>
+        <label class="check"><input type="checkbox" id="syncedOnly" checked> Synced lyrics only</label>
+        <div id="searchStatus" class="status" aria-live="polite"></div>
+        <ul id="results" class="results"></ul>
+      </section>
+
+      <section class="card">
+        <h2><span class="step alt">3</span> Singer queue</h2>
+        <form id="queueForm" class="row">
+          <input id="singer" type="text" placeholder="Singer's name" autocomplete="off" maxlength="40">
+          <button class="btn ghost" type="submit">Add song</button>
+        </form>
+        <p class="hint">Adds the song on stage right now. YouTube links are remembered; audio files need to be dropped in again.</p>
+        <ol id="queue" class="queue"></ol>
+        <button class="btn wide orange" id="nextUp" type="button" disabled>Next singer up</button>
+      </section>
+    </aside>
+
+    <section class="stage" id="stage">
+      <div class="yt-wrap bg" id="ytWrap" hidden><div id="ytPlayer"></div></div>
+
+      <div class="stage-head">
+        <div class="track">
+          <div class="track-title" id="trackTitle">Pick a song</div>
+          <div class="track-artist" id="trackArtist">Search on the left, or drop an audio file to auto-match</div>
+        </div>
+        <div class="warn" id="warn" hidden></div>
+      </div>
+
+      <div class="viewport" id="viewport">
+        <div class="lyrics" id="lyrics"></div>
+        <div class="countdown" id="countdown" hidden><i></i><i></i><i></i></div>
+        <div class="welcome" id="welcome">
+          <div class="welcome-big">Ready when you are, gator.</div>
+          <ol>
+            <li>Drop in a song file, paste a YouTube link, or play it on another device.</li>
+            <li>Lyrics come from <a href="https://lrclib.net" target="_blank" rel="noopener">LRCLIB</a>, an open database with millions of time-synced songs.</li>
+            <li>Lines light up orange as you sing. Click any line to jump to it.</li>
+          </ol>
+        </div>
+        <div class="plain" id="plain" hidden></div>
+      </div>
+
+      <div class="transport">
+        <button class="play" id="playBtn" type="button" aria-label="Play">
+          <svg viewBox="0 0 24 24" class="i-play"><path d="M7 4.5v15l13-7.5z"/></svg>
+          <svg viewBox="0 0 24 24" class="i-pause"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+        </button>
+        <span class="time" id="curTime">0:00</span>
+        <input type="range" id="seek" min="0" max="100" step="0.1" value="0" aria-label="Seek">
+        <span class="time" id="durTime">0:00</span>
+
+        <div class="sync" title="Shift lyrics earlier or later. Keys: [ and ]">
+          <button type="button" class="mini" id="offMinus" aria-label="Lyrics later">−</button>
+          <span class="off" id="offVal">±0.0s</span>
+          <button type="button" class="mini" id="offPlus" aria-label="Lyrics earlier">+</button>
+          <button type="button" class="mini tap" id="tapBtn" title="Tap the moment the next line starts (T)">Tap sync</button>
+        </div>
+        <button type="button" class="mini" id="fsBtn" title="Full screen (F)">⛶</button>
+      </div>
+      <div class="keys">
+        <span><kbd>Space</kbd> play/pause</span>
+        <span><kbd>←</kbd><kbd>→</kbd> 5s</span>
+        <span><kbd>[</kbd><kbd>]</kbd> nudge sync</span>
+        <span><kbd>T</kbd> tap sync</span>
+        <span><kbd>F</kbd> full screen</span>
+      </div>
+    </section>
+  </main>
+
+  <audio id="audio" preload="auto"></audio>
+  <script src="app.js"></script>
+</body>
+</html>
