@@ -52,7 +52,7 @@ function parseBody(body) {
   return { text, chunks: chunks.length ? chunks : null, endTag };
 }
 
-function parseLRC(src) {
+function parseLRC(src, duration = 0) {
   let offset = 0;
   const raw = [];
   for (const rawLine of src.split(/\r?\n/)) {
@@ -73,16 +73,17 @@ function parseLRC(src) {
     return { start: Math.max(0, r.start - offset), text: p.text, chunks: p.chunks, endTag: p.endTag != null ? p.endTag - offset : null };
   });
 
-  // Assign word timings. Without word tags we estimate a natural "wipe" speed.
+  // Word tags define syllable/word durations; otherwise estimate the pacing
+  // and give any remaining line time to a held final word.
   lines.forEach((L, i) => {
-    const next = lines[i + 1] ? lines[i + 1].start : L.start + 8;
+    const next = lines[i + 1] ? lines[i + 1].start : duration > L.start ? duration : L.start + 8;
     L.gap = !L.text;
     if (L.gap) { L.end = L.start; L.words = [{ text: '♪', start: L.start, end: L.start }]; return; }
 
     if (L.chunks) {
       const ws = L.chunks.map((c) => ({ text: c.text, start: Math.max(0, c.t - offset) }));
       const lastStart = ws[ws.length - 1].start;
-      const fallbackEnd = Math.min(next - 0.05, lastStart + 0.25 + ws[ws.length - 1].text.length * 0.08);
+      const fallbackEnd = Math.max(lastStart, next - 0.05);
       L.end = L.endTag != null ? Math.min(L.endTag, next) : fallbackEnd;
       ws.forEach((w, j) => { w.end = j < ws.length - 1 ? ws[j + 1].start : Math.max(L.end, w.start + 0.05); });
       ws[0].text = ws[0].text.replace(/^\s+/, '');
@@ -94,14 +95,15 @@ function parseLRC(src) {
     const chars = L.text.replace(/\s+/g, '').length;
     const est = 0.4 + chars * 0.075;
     const span = next - L.start;
-    const dur = span < est * 1.8 ? Math.max(0.3, span - 0.15) : est * 1.25;
+    const dur = Math.max(0, span - 0.15);
+    const pacedDur = Math.min(dur, est * 1.25);
     L.end = L.start + dur;
     const parts = L.text.split(/(?<=\s)(?=\S)/);
     const weights = parts.map((w) => w.trim().length + 1);
     const total = weights.reduce((a, b) => a + b, 0);
     let t = L.start;
     L.words = parts.map((w, j) => {
-      const d = dur * weights[j] / total;
+      const d = j === parts.length - 1 ? L.end - t : pacedDur * weights[j] / total;
       const word = { text: w, start: t, end: t + d };
       t += d;
       return word;
@@ -415,7 +417,7 @@ const countdown = $('#countdown');
 function loadTrack(r) {
   state.track = r;
   state.offset = store.get(`gkc.off.${r.id}`, 0);
-  state.lines = r.syncedLyrics ? parseLRC(r.syncedLyrics) : [];
+  state.lines = r.syncedLyrics ? parseLRC(r.syncedLyrics, r.duration) : [];
   state.active = state.focus = -2;
   $('#trackTitle').textContent = r.trackName;
   $('#trackArtist').textContent = [r.artistName, r.albumName].filter(Boolean).join(' · ');
