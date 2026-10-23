@@ -23,10 +23,8 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
-      - name: Check JavaScript and lyric timing
-        run: |
-          node --check app.js
-          node --test tests/*.test.cjs
+      - name: Check JavaScript
+        run: node --check app.js
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Prepare static site

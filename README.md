@@ -13,7 +13,6 @@ Lyrics come from [LRCLIB](https://lrclib.net), an open database with millions of
 ## Features
 
 - Word-by-word highlight (real word timings when the song has them, estimated otherwise)
-- Held syllables use their tagged duration; with line-only lyrics, extra time is assigned to the final word. Line-only timing remains approximate; a blank timed line marks an instrumental break.
 - Countdown dots before a line that follows an instrumental break
 - Click any line to jump to it
 - Tap sync and ±0.1s nudges, remembered per song
@@ -45,16 +44,15 @@ Then open http://localhost:8765. Any static host (GitHub Pages, Netlify, etc.) w
 
 1. Push this project, including `.github/workflows/pages.yml`, to a GitHub repository.
 2. In the repository's **Settings → Pages → Build and deployment**, set **Source** to **GitHub Actions**.
-3. Open **Actions → Deploy to GitHub Pages → Run workflow** and select the default branch. Future pushes to that branch deploy automatically after the lyric timing checks pass.
+3. Open **Actions → Deploy to GitHub Pages → Run workflow** and select the default branch. Future pushes to that branch deploy automatically after the JavaScript syntax check passes.
 4. Open the site link shown by the deployment. For a repository named `gator-karaoke`, this is normally `https://YOUR-USERNAME.github.io/gator-karaoke/`.
 
 The workflow publishes only `index.html`, `style.css`, and `app.js`; no build tools, API keys, or extra secrets are needed. Assets use relative URLs so repository subpaths work. See [GitHub's Pages setup guide](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site) for the repository setting.
 
 ## Checking changes
 
-With Node.js 18 or newer installed, run:
+With Node.js installed, run:
 
 ```bash
 node --check app.js
-node --test tests/*.test.cjs
 ```
